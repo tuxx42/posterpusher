@@ -117,7 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/today - Today's sales summary\n"
         "/week - This week's summary\n"
         "/month - This month's summary\n"
-        "/summary YYYYMMDD - Specific date\n\n"
+        "/summary DATE [DATE] - Custom date/range\n\n"
         "<b>Cash:</b>\n"
         "/cash - Cash register balance\n\n"
         "/help - Show this message",
@@ -213,20 +213,22 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /summary command - get summary for a specific date."""
+    """Handle /summary command - get summary for a specific date or date range."""
     if not context.args:
         await update.message.reply_text(
-            "Please provide a date.\n"
-            "Usage: /summary YYYYMMDD\n"
-            "Example: /summary 20260120"
+            "Please provide a date or date range.\n"
+            "Usage:\n"
+            "/summary YYYYMMDD - Single date\n"
+            "/summary YYYYMMDD YYYYMMDD - Date range\n\n"
+            "Examples:\n"
+            "/summary 20260120\n"
+            "/summary 20260115 20260120"
         )
         return
 
-    date_str = context.args[0]
-
+    # Parse first date
     try:
-        parsed_date = datetime.strptime(date_str, '%Y%m%d')
-        date_display = parsed_date.strftime('%d %b %Y')
+        date_from = datetime.strptime(context.args[0], '%Y%m%d')
     except ValueError:
         await update.message.reply_text(
             "❌ Invalid date format.\n"
@@ -235,11 +237,57 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
+    # Check if second date provided
+    if len(context.args) >= 2:
+        try:
+            date_to = datetime.strptime(context.args[1], '%Y%m%d')
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Invalid end date format.\n"
+                "Use YYYYMMDD format.\n"
+                "Example: /summary 20260115 20260120"
+            )
+            return
 
-    transactions = fetch_transactions(date_str)
-    summary_data = calculate_summary(transactions)
-    message = format_summary_message(date_display, summary_data)
+        # Ensure date_from is before date_to
+        if date_from > date_to:
+            date_from, date_to = date_to, date_from
+
+        date_from_str = date_from.strftime('%Y%m%d')
+        date_to_str = date_to.strftime('%Y%m%d')
+        date_display = f"{date_from.strftime('%d %b')} - {date_to.strftime('%d %b %Y')}"
+
+        await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
+
+        transactions = fetch_transactions(date_from_str, date_to_str)
+        summary_data = calculate_summary(transactions)
+
+        # Calculate daily average for range
+        days_count = (date_to - date_from).days + 1
+        avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
+        avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
+
+        message = (
+            f"📊 <b>Summary for {date_display}</b>\n\n"
+            f"<b>Transactions:</b> {summary_data['transaction_count']}\n"
+            f"<b>Total Sales:</b> {format_currency(summary_data['total_sales'])}\n"
+            f"<b>Total Profit:</b> {format_currency(summary_data['total_profit'])}\n\n"
+            f"<b>💵 Cash:</b> {format_currency(summary_data['cash_sales'])}\n"
+            f"<b>💳 Card:</b> {format_currency(summary_data['card_sales'])}\n\n"
+            f"<b>📊 Daily Average ({days_count} days):</b>\n"
+            f"• Sales: {format_currency(avg_sales)}\n"
+            f"• Profit: {format_currency(avg_profit)}"
+        )
+    else:
+        # Single date
+        date_str = date_from.strftime('%Y%m%d')
+        date_display = date_from.strftime('%d %b %Y')
+
+        await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
+
+        transactions = fetch_transactions(date_str)
+        summary_data = calculate_summary(transactions)
+        message = format_summary_message(date_display, summary_data)
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
