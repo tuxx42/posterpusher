@@ -30,7 +30,14 @@ scheduler = None
 
 # Track subscribed chats and last seen transaction
 subscribed_chats = set()
+theft_alert_chats = set()
 last_seen_transaction_id = None
+last_seen_void_id = None
+last_cash_balance = None
+
+# Theft detection thresholds
+LARGE_DISCOUNT_THRESHOLD = 20  # Alert if discount > 20%
+LARGE_REFUND_THRESHOLD = 50000  # Alert if refund > 500 THB (in cents)
 
 
 def format_currency(amount_in_cents):
@@ -126,7 +133,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/cash - Cash register balance\n\n"
         "<b>Real-time:</b>\n"
         "/subscribe - Get notified on each sale\n"
-        "/unsubscribe - Stop notifications\n\n"
+        "/unsubscribe - Stop sale notifications\n\n"
+        "<b>Security:</b>\n"
+        "/alerts - Enable theft detection\n"
+        "/alerts_off - Disable theft alerts\n\n"
         "/help - Show this message",
         parse_mode=ParseMode.HTML
     )
@@ -343,6 +353,26 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+def fetch_removed_transactions(date_from, date_to=None):
+    """Fetch removed/voided transactions from Poster API."""
+    url = f"{POSTER_API_URL}/dash.getTransactions"
+    params = {
+        "token": POSTER_ACCESS_TOKEN,
+        "date_from": date_from,
+        "date_to": date_to or date_from,
+        "status": "3"  # Status 3 = removed/voided
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", [])
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch removed transactions: {e}")
+        return []
+
+
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /subscribe command - enable real-time sale notifications."""
     chat_id = str(update.effective_chat.id)
@@ -376,6 +406,176 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         parse_mode=ParseMode.HTML
     )
     logger.info(f"Chat {chat_id} unsubscribed from real-time updates")
+
+
+async def alerts_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /alerts command - enable theft detection alerts."""
+    chat_id = str(update.effective_chat.id)
+
+    if chat_id in theft_alert_chats:
+        await update.message.reply_text("✅ Theft detection alerts are already enabled.")
+        return
+
+    theft_alert_chats.add(chat_id)
+    await update.message.reply_text(
+        "🚨 <b>Theft Detection Enabled!</b>\n\n"
+        "You'll receive alerts for:\n"
+        "• Voided/cancelled transactions\n"
+        "• Large discounts (>20%)\n"
+        "• Suspicious refunds\n"
+        "• Cash register discrepancies\n\n"
+        "Use /alerts_off to disable.",
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Chat {chat_id} enabled theft detection alerts")
+
+
+async def alerts_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /alerts_off command - disable theft detection alerts."""
+    chat_id = str(update.effective_chat.id)
+
+    if chat_id not in theft_alert_chats:
+        await update.message.reply_text("ℹ️ Theft detection alerts are not enabled.")
+        return
+
+    theft_alert_chats.discard(chat_id)
+    await update.message.reply_text(
+        "🔕 <b>Theft Detection Disabled!</b>\n\n"
+        "You'll no longer receive theft alerts.",
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Chat {chat_id} disabled theft detection alerts")
+
+
+async def send_theft_alert(alert_type, message):
+    """Send theft alert to all subscribed chats."""
+    if not theft_alert_chats or not TELEGRAM_BOT_TOKEN:
+        return
+
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+
+    for chat_id in theft_alert_chats.copy():
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Failed to send theft alert to {chat_id}: {e}")
+            if "chat not found" in str(e).lower():
+                theft_alert_chats.discard(chat_id)
+
+
+async def check_theft_indicators():
+    """Check for potential theft indicators."""
+    global last_seen_void_id, last_cash_balance
+
+    if not theft_alert_chats:
+        return
+
+    today_str = date.today().strftime('%Y%m%d')
+
+    try:
+        # Check for voided transactions
+        voided = fetch_removed_transactions(today_str)
+        if voided:
+            voided.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
+            latest_void = voided[0]
+            latest_void_id = latest_void.get('transaction_id')
+
+            if last_seen_void_id is None:
+                last_seen_void_id = latest_void_id
+            elif latest_void_id != last_seen_void_id:
+                # New void detected
+                new_voids = [
+                    v for v in voided
+                    if int(v.get('transaction_id', 0)) > int(last_seen_void_id or 0)
+                ]
+                last_seen_void_id = latest_void_id
+
+                for void_txn in new_voids:
+                    amount = int(void_txn.get('sum', 0) or 0)
+                    reason = void_txn.get('reason', 'No reason given')
+                    staff = void_txn.get('name', 'Unknown')
+                    table = void_txn.get('table_name', 'N/A')
+
+                    alert_msg = (
+                        f"🚨 <b>VOID ALERT</b>\n\n"
+                        f"<b>Amount:</b> {format_currency(amount)}\n"
+                        f"<b>Staff:</b> {staff}\n"
+                        f"<b>Table:</b> {table}\n"
+                        f"<b>Reason:</b> {reason}\n\n"
+                        f"⚠️ Please verify this void was legitimate."
+                    )
+                    await send_theft_alert("void", alert_msg)
+
+        # Check for large discounts in recent transactions
+        transactions = fetch_transactions(today_str)
+        for txn in transactions:
+            discount = int(txn.get('discount', 0) or 0)
+            total = int(txn.get('sum', 0) or 0)
+
+            if total > 0 and discount > 0:
+                # Calculate discount percentage
+                original = total + discount
+                discount_pct = (discount / original) * 100
+
+                if discount_pct > LARGE_DISCOUNT_THRESHOLD:
+                    txn_id = txn.get('transaction_id')
+                    staff = txn.get('name', 'Unknown')
+                    table = txn.get('table_name', 'N/A')
+
+                    alert_msg = (
+                        f"⚠️ <b>LARGE DISCOUNT ALERT</b>\n\n"
+                        f"<b>Discount:</b> {discount_pct:.1f}% ({format_currency(discount)})\n"
+                        f"<b>Final Amount:</b> {format_currency(total)}\n"
+                        f"<b>Staff:</b> {staff}\n"
+                        f"<b>Table:</b> {table}\n"
+                        f"<b>Transaction:</b> #{txn_id}\n\n"
+                        f"⚠️ Please verify this discount was authorized."
+                    )
+                    await send_theft_alert("discount", alert_msg)
+
+        # Check cash register discrepancies
+        shifts = fetch_cash_shifts()
+        if shifts:
+            latest_shift = shifts[0]
+            if latest_shift.get('date_end'):  # Shift is closed
+                expected = int(latest_shift.get('amount_start', 0) or 0) + \
+                          int(latest_shift.get('amount_sell_cash', 0) or 0) - \
+                          int(latest_shift.get('amount_credit', 0) or 0)
+                actual = int(latest_shift.get('amount_end', 0) or 0)
+
+                discrepancy = actual - expected
+
+                if last_cash_balance != actual and abs(discrepancy) > 10000:  # > 100 THB
+                    last_cash_balance = actual
+                    staff = latest_shift.get('comment', 'Unknown')
+
+                    if discrepancy < 0:
+                        alert_msg = (
+                            f"🚨 <b>CASH SHORTAGE ALERT</b>\n\n"
+                            f"<b>Missing:</b> {format_currency(abs(discrepancy))}\n"
+                            f"<b>Expected:</b> {format_currency(expected)}\n"
+                            f"<b>Actual:</b> {format_currency(actual)}\n"
+                            f"<b>Staff:</b> {staff}\n\n"
+                            f"⚠️ Cash drawer is short!"
+                        )
+                        await send_theft_alert("shortage", alert_msg)
+                    else:
+                        alert_msg = (
+                            f"⚠️ <b>CASH OVERAGE ALERT</b>\n\n"
+                            f"<b>Extra:</b> {format_currency(discrepancy)}\n"
+                            f"<b>Expected:</b> {format_currency(expected)}\n"
+                            f"<b>Actual:</b> {format_currency(actual)}\n"
+                            f"<b>Staff:</b> {staff}\n\n"
+                            f"ℹ️ Cash drawer has extra money (possible missed sale)."
+                        )
+                        await send_theft_alert("overage", alert_msg)
+
+    except Exception as e:
+        logger.error(f"Error in theft detection: {e}")
 
 
 async def check_new_transactions():
@@ -512,6 +712,8 @@ def main():
     application.add_handler(CommandHandler("cash", cash))
     application.add_handler(CommandHandler("subscribe", subscribe))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
+    application.add_handler(CommandHandler("alerts", alerts_on))
+    application.add_handler(CommandHandler("alerts_off", alerts_off))
 
     # Set up scheduler for background jobs
     scheduler = AsyncIOScheduler(timezone=THAI_TZ)
@@ -522,6 +724,14 @@ def main():
         'interval',
         seconds=30,
         id="check_transactions"
+    )
+
+    # Check for theft indicators every 60 seconds
+    scheduler.add_job(
+        check_theft_indicators,
+        'interval',
+        seconds=60,
+        id="check_theft"
     )
 
     # Schedule daily summary at 23:59 Bangkok time
