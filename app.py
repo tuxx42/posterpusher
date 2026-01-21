@@ -98,6 +98,10 @@ def format_sale_message(webhook_data, transaction_details):
 
     # Extract transaction info (adjust field names based on actual API response)
     if transaction_details:
+        # Handle if API returns a list
+        if isinstance(transaction_details, list) and len(transaction_details) > 0:
+            transaction_details = transaction_details[0]
+
         # Poster API typically returns amounts in cents
         total = transaction_details.get('sum', 0) or transaction_details.get('payed_sum', 0) or 0
         profit = transaction_details.get('profit', 0) or 0
