@@ -1,10 +1,13 @@
 import os
 import logging
+import asyncio
 from datetime import datetime, date, time, timedelta
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
 import requests
 import pytz
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 # Configure logging
 logging.basicConfig(
@@ -291,10 +294,10 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode='HTML')
 
 
-async def send_daily_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def send_daily_summary() -> None:
     """Send daily summary at midnight."""
-    if not TELEGRAM_CHAT_ID:
-        logger.warning("TELEGRAM_CHAT_ID not set, skipping scheduled summary")
+    if not TELEGRAM_CHAT_ID or not TELEGRAM_BOT_TOKEN:
+        logger.warning("TELEGRAM_CHAT_ID or BOT_TOKEN not set, skipping scheduled summary")
         return
 
     today_str = date.today().strftime('%Y%m%d')
@@ -306,7 +309,8 @@ async def send_daily_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
     message = f"🌙 <b>End of Day Report</b>\n\n" + format_summary_message(today_display, summary_data)[3:]  # Remove the 📊 emoji
 
     try:
-        await context.bot.send_message(
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=message,
             parse_mode='HTML'
@@ -326,8 +330,8 @@ def main() -> None:
         logger.error("POSTER_ACCESS_TOKEN not set")
         return
 
-    # Create application
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    # Create application without job queue
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).job_queue(None).build()
 
     # Add command handlers
     application.add_handler(CommandHandler("start", start))
@@ -338,14 +342,15 @@ def main() -> None:
     application.add_handler(CommandHandler("summary", summary))
     application.add_handler(CommandHandler("cash", cash))
 
-    # Schedule daily summary at midnight Thai time (23:59)
+    # Schedule daily summary at midnight Thai time (23:59) using APScheduler
     if TELEGRAM_CHAT_ID:
-        job_queue = application.job_queue
-        job_queue.run_daily(
+        scheduler = AsyncIOScheduler(timezone=THAI_TZ)
+        scheduler.add_job(
             send_daily_summary,
-            time=time(hour=23, minute=59, second=0, tzinfo=THAI_TZ),
-            name="daily_summary"
+            CronTrigger(hour=23, minute=59, timezone=THAI_TZ),
+            id="daily_summary"
         )
+        scheduler.start()
         logger.info(f"Scheduled daily summary at 23:59 Bangkok time to chat {TELEGRAM_CHAT_ID}")
     else:
         logger.warning("TELEGRAM_CHAT_ID not set - daily summary disabled")
