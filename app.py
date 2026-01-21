@@ -1,12 +1,11 @@
 import os
 import logging
-import asyncio
-from datetime import datetime, date, time, timedelta
-from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, ContextTypes
+from datetime import datetime, date, timedelta
+from telegram import Update, Bot, ParseMode
+from telegram.ext import Updater, CommandHandler, CallbackContext
 import requests
 import pytz
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 # Configure logging
@@ -17,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')  # For scheduled notifications
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 POSTER_ACCESS_TOKEN = os.environ.get('POSTER_ACCESS_TOKEN')
 POSTER_API_URL = "https://joinposter.com/api"
 
@@ -31,10 +30,10 @@ def format_currency(amount_in_cents):
         amount = float(amount_in_cents) / 100
         return f"฿{amount:,.2f}"
     except (ValueError, TypeError):
-        return f"฿0.00"
+        return "฿0.00"
 
 
-def fetch_cash_shifts() -> list:
+def fetch_cash_shifts():
     """Fetch cash shift data from Poster API."""
     url = f"{POSTER_API_URL}/finance.getCashShifts"
     params = {"token": POSTER_ACCESS_TOKEN}
@@ -49,7 +48,7 @@ def fetch_cash_shifts() -> list:
         return []
 
 
-def fetch_transactions(date_from: str, date_to: str = None) -> list:
+def fetch_transactions(date_from, date_to=None):
     """Fetch transactions for a date or date range from Poster API."""
     url = f"{POSTER_API_URL}/dash.getTransactions"
     params = {
@@ -68,7 +67,7 @@ def fetch_transactions(date_from: str, date_to: str = None) -> list:
         return []
 
 
-def calculate_summary(transactions: list) -> dict:
+def calculate_summary(transactions):
     """Calculate summary statistics from transactions."""
     total_sales = 0
     total_profit = 0
@@ -90,12 +89,12 @@ def calculate_summary(transactions: list) -> dict:
     }
 
 
-def format_summary_message(date_display: str, summary: dict) -> str:
+def format_summary_message(date_display, summary):
     """Format the summary into a Telegram message."""
     if summary["transaction_count"] == 0:
         return f"📊 <b>Summary for {date_display}</b>\n\nNo transactions found."
 
-    message = (
+    return (
         f"📊 <b>Summary for {date_display}</b>\n\n"
         f"<b>Transactions:</b> {summary['transaction_count']}\n"
         f"<b>Total Sales:</b> {format_currency(summary['total_sales'])}\n"
@@ -104,12 +103,10 @@ def format_summary_message(date_display: str, summary: dict) -> str:
         f"<b>💳 Card:</b> {format_currency(summary['card_sales'])}"
     )
 
-    return message
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def start(update: Update, context: CallbackContext) -> None:
     """Handle /start command."""
-    await update.message.reply_text(
+    update.message.reply_text(
         "🍺 <b>Ban Sabai POS Bot</b>\n\n"
         "<b>Reports:</b>\n"
         "/today - Today's sales summary\n"
@@ -119,79 +116,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Cash:</b>\n"
         "/cash - Cash register balance\n\n"
         "/help - Show this message",
-        parse_mode='HTML'
+        parse_mode=ParseMode.HTML
     )
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def help_command(update: Update, context: CallbackContext) -> None:
     """Handle /help command."""
-    await start(update, context)
+    start(update, context)
 
 
-async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def today(update: Update, context: CallbackContext) -> None:
     """Handle /today command - get today's summary."""
     today_str = date.today().strftime('%Y%m%d')
     today_display = date.today().strftime('%d %b %Y')
 
-    await update.message.reply_text("⏳ Fetching today's data...")
+    update.message.reply_text("⏳ Fetching today's data...")
 
     transactions = fetch_transactions(today_str)
     summary = calculate_summary(transactions)
     message = format_summary_message(today_display, summary)
 
-    await update.message.reply_text(message, parse_mode='HTML')
+    update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /summary command - get summary for a specific date."""
-    if not context.args:
-        await update.message.reply_text(
-            "Please provide a date.\n"
-            "Usage: /summary YYYYMMDD\n"
-            "Example: /summary 20260120"
-        )
-        return
-
-    date_str = context.args[0]
-
-    # Validate date format
-    try:
-        parsed_date = datetime.strptime(date_str, '%Y%m%d')
-        date_display = parsed_date.strftime('%d %b %Y')
-    except ValueError:
-        await update.message.reply_text(
-            "❌ Invalid date format.\n"
-            "Use YYYYMMDD format.\n"
-            "Example: /summary 20260120"
-        )
-        return
-
-    await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
-
-    transactions = fetch_transactions(date_str)
-    summary_data = calculate_summary(transactions)
-    message = format_summary_message(date_display, summary_data)
-
-    await update.message.reply_text(message, parse_mode='HTML')
-
-
-async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def week(update: Update, context: CallbackContext) -> None:
     """Handle /week command - get this week's summary."""
-    today = date.today()
-    # Get Monday of current week
-    monday = today - timedelta(days=today.weekday())
+    today_date = date.today()
+    monday = today_date - timedelta(days=today_date.weekday())
 
     date_from = monday.strftime('%Y%m%d')
-    date_to = today.strftime('%Y%m%d')
-    week_display = f"{monday.strftime('%d %b')} - {today.strftime('%d %b %Y')}"
+    date_to = today_date.strftime('%Y%m%d')
+    week_display = f"{monday.strftime('%d %b')} - {today_date.strftime('%d %b %Y')}"
 
-    await update.message.reply_text(f"⏳ Fetching data for this week...")
+    update.message.reply_text("⏳ Fetching data for this week...")
 
     transactions = fetch_transactions(date_from, date_to)
     summary_data = calculate_summary(transactions)
 
-    # Calculate daily average
-    days_count = (today - monday).days + 1
+    days_count = (today_date - monday).days + 1
     avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
     avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
 
@@ -208,25 +170,24 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"• Profit: {format_currency(avg_profit)}"
     )
 
-    await update.message.reply_text(message, parse_mode='HTML')
+    update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def month(update: Update, context: CallbackContext) -> None:
     """Handle /month command - get this month's summary."""
-    today = date.today()
-    first_of_month = today.replace(day=1)
+    today_date = date.today()
+    first_of_month = today_date.replace(day=1)
 
     date_from = first_of_month.strftime('%Y%m%d')
-    date_to = today.strftime('%Y%m%d')
-    month_display = today.strftime('%B %Y')
+    date_to = today_date.strftime('%Y%m%d')
+    month_display = today_date.strftime('%B %Y')
 
-    await update.message.reply_text(f"⏳ Fetching data for {month_display}...")
+    update.message.reply_text(f"⏳ Fetching data for {month_display}...")
 
     transactions = fetch_transactions(date_from, date_to)
     summary_data = calculate_summary(transactions)
 
-    # Calculate daily average
-    days_count = today.day
+    days_count = today_date.day
     avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
     avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
 
@@ -243,20 +204,51 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"• Profit: {format_currency(avg_profit)}"
     )
 
-    await update.message.reply_text(message, parse_mode='HTML')
+    update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def summary(update: Update, context: CallbackContext) -> None:
+    """Handle /summary command - get summary for a specific date."""
+    if not context.args:
+        update.message.reply_text(
+            "Please provide a date.\n"
+            "Usage: /summary YYYYMMDD\n"
+            "Example: /summary 20260120"
+        )
+        return
+
+    date_str = context.args[0]
+
+    try:
+        parsed_date = datetime.strptime(date_str, '%Y%m%d')
+        date_display = parsed_date.strftime('%d %b %Y')
+    except ValueError:
+        update.message.reply_text(
+            "❌ Invalid date format.\n"
+            "Use YYYYMMDD format.\n"
+            "Example: /summary 20260120"
+        )
+        return
+
+    update.message.reply_text(f"⏳ Fetching data for {date_display}...")
+
+    transactions = fetch_transactions(date_str)
+    summary_data = calculate_summary(transactions)
+    message = format_summary_message(date_display, summary_data)
+
+    update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+def cash(update: Update, context: CallbackContext) -> None:
     """Handle /cash command - get current cash register status."""
-    await update.message.reply_text("⏳ Fetching cash register data...")
+    update.message.reply_text("⏳ Fetching cash register data...")
 
     shifts = fetch_cash_shifts()
 
     if not shifts:
-        await update.message.reply_text("❌ Could not fetch cash register data.")
+        update.message.reply_text("❌ Could not fetch cash register data.")
         return
 
-    # Get the most recent shift (first in list)
     latest_shift = shifts[0]
 
     shift_start = latest_shift.get('date_start', 'Unknown')
@@ -267,14 +259,11 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cash_out = int(latest_shift.get('amount_credit', 0) or 0)
     staff = latest_shift.get('comment', 'Unknown')
 
-    # Check if shift is still open (has end time means closed)
     if shift_end:
-        # Shift is closed
         status = "🔴 Closed"
         current_cash = amount_end
         shift_info = f"<b>Ended:</b> {shift_end}"
     else:
-        # Shift is open - calculate current cash
         status = "🟢 Open"
         current_cash = amount_start + cash_sales - cash_out
         shift_info = f"<b>Started:</b> {shift_start}"
@@ -291,10 +280,10 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"• Cash Out: -{format_currency(cash_out)}"
     )
 
-    await update.message.reply_text(message, parse_mode='HTML')
+    update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-async def send_daily_summary() -> None:
+def send_daily_summary():
     """Send daily summary at midnight."""
     if not TELEGRAM_CHAT_ID or not TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_CHAT_ID or BOT_TOKEN not set, skipping scheduled summary")
@@ -306,21 +295,21 @@ async def send_daily_summary() -> None:
     transactions = fetch_transactions(today_str)
     summary_data = calculate_summary(transactions)
 
-    message = f"🌙 <b>End of Day Report</b>\n\n" + format_summary_message(today_display, summary_data)[3:]  # Remove the 📊 emoji
+    message = f"🌙 <b>End of Day Report</b>\n\n" + format_summary_message(today_display, summary_data)[3:]
 
     try:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
-        await bot.send_message(
+        bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=message,
-            parse_mode='HTML'
+            parse_mode=ParseMode.HTML
         )
         logger.info("Daily summary sent successfully")
     except Exception as e:
         logger.error(f"Failed to send daily summary: {e}")
 
 
-def main() -> None:
+def main():
     """Start the bot."""
     if not TELEGRAM_BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN not set")
@@ -330,21 +319,22 @@ def main() -> None:
         logger.error("POSTER_ACCESS_TOKEN not set")
         return
 
-    # Create application without job queue
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).job_queue(None).build()
+    # Create updater
+    updater = Updater(TELEGRAM_BOT_TOKEN)
+    dispatcher = updater.dispatcher
 
     # Add command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("today", today))
-    application.add_handler(CommandHandler("week", week))
-    application.add_handler(CommandHandler("month", month))
-    application.add_handler(CommandHandler("summary", summary))
-    application.add_handler(CommandHandler("cash", cash))
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("today", today))
+    dispatcher.add_handler(CommandHandler("week", week))
+    dispatcher.add_handler(CommandHandler("month", month))
+    dispatcher.add_handler(CommandHandler("summary", summary))
+    dispatcher.add_handler(CommandHandler("cash", cash))
 
-    # Schedule daily summary at midnight Thai time (23:59) using APScheduler
+    # Schedule daily summary at 23:59 Bangkok time
     if TELEGRAM_CHAT_ID:
-        scheduler = AsyncIOScheduler(timezone=THAI_TZ)
+        scheduler = BackgroundScheduler(timezone=THAI_TZ)
         scheduler.add_job(
             send_daily_summary,
             CronTrigger(hour=23, minute=59, timezone=THAI_TZ),
@@ -357,7 +347,8 @@ def main() -> None:
 
     # Start the bot
     logger.info("Starting bot...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    updater.start_polling()
+    updater.idle()
 
 
 if __name__ == '__main__':
