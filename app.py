@@ -28,6 +28,10 @@ THAI_TZ = pytz.timezone('Asia/Bangkok')
 # Global scheduler
 scheduler = None
 
+# Track subscribed chats and last seen transaction
+subscribed_chats = set()
+last_seen_transaction_id = None
+
 
 def format_currency(amount_in_cents):
     """Format amount from cents to THB."""
@@ -120,6 +124,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/summary DATE [DATE] - Custom date/range\n\n"
         "<b>Cash:</b>\n"
         "/cash - Cash register balance\n\n"
+        "<b>Real-time:</b>\n"
+        "/subscribe - Get notified on each sale\n"
+        "/unsubscribe - Stop notifications\n\n"
         "/help - Show this message",
         parse_mode=ParseMode.HTML
     )
@@ -336,6 +343,124 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /subscribe command - enable real-time sale notifications."""
+    chat_id = str(update.effective_chat.id)
+
+    if chat_id in subscribed_chats:
+        await update.message.reply_text("✅ You're already subscribed to real-time updates.")
+        return
+
+    subscribed_chats.add(chat_id)
+    await update.message.reply_text(
+        "🔔 <b>Subscribed!</b>\n\n"
+        "You'll now receive notifications for each new sale.\n"
+        "Use /unsubscribe to stop.",
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Chat {chat_id} subscribed to real-time updates")
+
+
+async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /unsubscribe command - disable real-time sale notifications."""
+    chat_id = str(update.effective_chat.id)
+
+    if chat_id not in subscribed_chats:
+        await update.message.reply_text("ℹ️ You're not subscribed to real-time updates.")
+        return
+
+    subscribed_chats.discard(chat_id)
+    await update.message.reply_text(
+        "🔕 <b>Unsubscribed!</b>\n\n"
+        "You'll no longer receive real-time sale notifications.",
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Chat {chat_id} unsubscribed from real-time updates")
+
+
+async def check_new_transactions():
+    """Poll for new transactions and notify subscribed chats."""
+    global last_seen_transaction_id
+
+    if not subscribed_chats:
+        return
+
+    if not TELEGRAM_BOT_TOKEN:
+        return
+
+    try:
+        # Fetch today's transactions
+        today_str = date.today().strftime('%Y%m%d')
+        transactions = fetch_transactions(today_str)
+
+        if not transactions:
+            return
+
+        # Sort by transaction_id to get the latest
+        transactions.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
+        latest_txn = transactions[0]
+        latest_id = latest_txn.get('transaction_id')
+
+        # First run - just set the last seen ID
+        if last_seen_transaction_id is None:
+            last_seen_transaction_id = latest_id
+            logger.info(f"Initialized last_seen_transaction_id to {latest_id}")
+            return
+
+        # Check if there's a new transaction
+        if latest_id != last_seen_transaction_id:
+            # Find all new transactions
+            new_transactions = [
+                t for t in transactions
+                if int(t.get('transaction_id', 0)) > int(last_seen_transaction_id)
+            ]
+
+            last_seen_transaction_id = latest_id
+
+            if new_transactions:
+                bot = Bot(token=TELEGRAM_BOT_TOKEN)
+
+                for txn in reversed(new_transactions):  # Send oldest first
+                    total = int(txn.get('sum', 0) or 0)
+                    profit = int(txn.get('total_profit', 0) or 0)
+                    payed_cash = int(txn.get('payed_cash', 0) or 0)
+                    payed_card = int(txn.get('payed_card', 0) or 0)
+                    table_name = txn.get('table_name', '')
+
+                    if payed_card > 0 and payed_cash > 0:
+                        payment = "💳+💵"
+                    elif payed_card > 0:
+                        payment = "💳 Card"
+                    else:
+                        payment = "💵 Cash"
+
+                    message = (
+                        f"💰 <b>New Sale!</b>\n\n"
+                        f"<b>Amount:</b> {format_currency(total)}\n"
+                        f"<b>Profit:</b> {format_currency(profit)}\n"
+                        f"<b>Payment:</b> {payment}\n"
+                        f"<b>Table:</b> {table_name}"
+                    )
+
+                    for chat_id in subscribed_chats.copy():
+                        try:
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=message,
+                                parse_mode=ParseMode.HTML
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to send to {chat_id}: {e}")
+                            # Remove invalid chats
+                            if "chat not found" in str(e).lower():
+                                subscribed_chats.discard(chat_id)
+
+                logger.info(f"Sent {len(new_transactions)} new transaction notifications")
+
+    except Exception as e:
+        logger.error(f"Error checking new transactions: {e}")
+
+
 async def send_daily_summary():
     """Send daily summary at midnight."""
     if not TELEGRAM_CHAT_ID or not TELEGRAM_BOT_TOKEN:
@@ -385,19 +510,33 @@ def main():
     application.add_handler(CommandHandler("month", month))
     application.add_handler(CommandHandler("summary", summary))
     application.add_handler(CommandHandler("cash", cash))
+    application.add_handler(CommandHandler("subscribe", subscribe))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe))
 
-    # Schedule daily summary at 23:59 Bangkok time using APScheduler
+    # Set up scheduler for background jobs
+    scheduler = AsyncIOScheduler(timezone=THAI_TZ)
+
+    # Poll for new transactions every 30 seconds
+    scheduler.add_job(
+        check_new_transactions,
+        'interval',
+        seconds=30,
+        id="check_transactions"
+    )
+
+    # Schedule daily summary at 23:59 Bangkok time
     if TELEGRAM_CHAT_ID:
-        scheduler = AsyncIOScheduler(timezone=THAI_TZ)
         scheduler.add_job(
             send_daily_summary,
             CronTrigger(hour=23, minute=59, timezone=THAI_TZ),
             id="daily_summary"
         )
-        scheduler.start()
         logger.info(f"Scheduled daily summary at 23:59 Bangkok time to chat {TELEGRAM_CHAT_ID}")
     else:
         logger.warning("TELEGRAM_CHAT_ID not set - daily summary disabled")
+
+    scheduler.start()
+    logger.info("Started transaction polling (every 30 seconds)")
 
     # Start the bot
     logger.info("Starting bot...")
