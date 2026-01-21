@@ -96,25 +96,40 @@ def format_sale_message(webhook_data, transaction_details):
         except (ValueError, TypeError):
             pass
 
-    # Extract transaction info (adjust field names based on actual API response)
+    # Extract transaction info from Poster API response
     if transaction_details:
         # Handle if API returns a list
         if isinstance(transaction_details, list) and len(transaction_details) > 0:
-            transaction_details = transaction_details[0]
+            txn = transaction_details[0]
+        else:
+            txn = transaction_details
 
-        # Poster API typically returns amounts in cents
-        total = transaction_details.get('sum', 0) or transaction_details.get('payed_sum', 0) or 0
-        profit = transaction_details.get('profit', 0) or 0
+        # Extract values (API returns strings, convert to int)
+        total = int(txn.get('sum', 0) or 0)
+        profit = int(txn.get('total_profit', 0) or 0)
+        payed_cash = int(txn.get('payed_cash', 0) or 0)
+        payed_card = int(txn.get('payed_card', 0) or 0)
+        table_name = txn.get('table_name', '')
+
+        # Determine payment method
+        if payed_card > 0 and payed_cash > 0:
+            payment_method = "💳 Card + 💵 Cash"
+        elif payed_card > 0:
+            payment_method = "💳 Card"
+        else:
+            payment_method = "💵 Cash"
 
         # Update daily stats
-        daily_stats["total_sales"] += int(total)
-        daily_stats["total_profit"] += int(profit)
+        daily_stats["total_sales"] += total
+        daily_stats["total_profit"] += profit
         daily_stats["transaction_count"] += 1
 
         message = (
             f"💰 <b>Sale Closed</b>\n\n"
             f"<b>Amount:</b> {format_currency(total)}\n"
             f"<b>Profit:</b> {format_currency(profit)}\n"
+            f"<b>Payment:</b> {payment_method}\n"
+            f"<b>Table:</b> {table_name}\n"
             f"<b>Time:</b> {timestamp}\n\n"
             f"📊 <b>Today's Totals</b>\n"
             f"<b>Sales:</b> {format_currency(daily_stats['total_sales'])}\n"
