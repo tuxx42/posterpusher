@@ -1,6 +1,7 @@
 import os
+import json
 import requests
-from datetime import datetime
+from datetime import datetime, date
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -8,6 +9,48 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 POSTER_ACCESS_TOKEN = os.environ.get('POSTER_ACCESS_TOKEN')
+POSTER_API_URL = "https://joinposter.com/api"
+
+# Simple in-memory daily totals (resets on server restart)
+daily_stats = {
+    "date": None,
+    "total_sales": 0,
+    "total_profit": 0,
+    "transaction_count": 0
+}
+
+
+def reset_daily_stats_if_needed():
+    """Reset daily stats if it's a new day."""
+    today = date.today().isoformat()
+    if daily_stats["date"] != today:
+        daily_stats["date"] = today
+        daily_stats["total_sales"] = 0
+        daily_stats["total_profit"] = 0
+        daily_stats["transaction_count"] = 0
+
+
+def get_transaction_details(transaction_id):
+    """Fetch transaction details from Poster API."""
+    if not POSTER_ACCESS_TOKEN:
+        print("Poster access token not configured")
+        return None
+
+    url = f"{POSTER_API_URL}/dash.getTransaction"
+    params = {
+        "token": POSTER_ACCESS_TOKEN,
+        "transaction_id": transaction_id
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        print(f"Transaction details: {json.dumps(data, indent=2)}")
+        return data.get("response")
+    except requests.RequestException as e:
+        print(f"Failed to fetch transaction details: {e}")
+        return None
 
 
 def send_telegram_message(message):
@@ -32,36 +75,58 @@ def send_telegram_message(message):
         return False
 
 
-def format_webhook_message(data):
-    """Format the Poster POS webhook data into a readable message."""
-    timestamp = data.get('time', '')
+def format_currency(amount_in_cents):
+    """Format amount from cents to THB."""
+    try:
+        amount = float(amount_in_cents) / 100
+        return f"฿{amount:,.2f}"
+    except (ValueError, TypeError):
+        return f"฿{amount_in_cents}"
+
+
+def format_sale_message(webhook_data, transaction_details):
+    """Format the closed sale into a readable Telegram message."""
+    reset_daily_stats_if_needed()
+
+    timestamp = webhook_data.get('time', '')
     if timestamp:
         try:
             dt = datetime.fromtimestamp(int(timestamp))
-            timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
+            timestamp = dt.strftime('%H:%M:%S')
         except (ValueError, TypeError):
             pass
 
-    object_type = data.get('object', 'unknown')
-    action = data.get('action', 'unknown')
-    object_id = data.get('object_id', 'N/A')
-    account = data.get('account', 'unknown')
+    # Extract transaction info (adjust field names based on actual API response)
+    if transaction_details:
+        # Poster API typically returns amounts in cents
+        total = transaction_details.get('sum', 0) or transaction_details.get('payed_sum', 0) or 0
+        profit = transaction_details.get('profit', 0) or 0
 
-    action_emoji = {
-        'added': '➕',
-        'changed': '✏️',
-        'removed': '❌',
-        'closed': '✅'
-    }.get(action, '📋')
+        # Update daily stats
+        daily_stats["total_sales"] += int(total)
+        daily_stats["total_profit"] += int(profit)
+        daily_stats["transaction_count"] += 1
 
-    message = (
-        f"{action_emoji} <b>Poster POS Notification</b>\n\n"
-        f"<b>Type:</b> {object_type.capitalize()}\n"
-        f"<b>Action:</b> {action.capitalize()}\n"
-        f"<b>ID:</b> {object_id}\n"
-        f"<b>Account:</b> {account}\n"
-        f"<b>Time:</b> {timestamp}"
-    )
+        message = (
+            f"💰 <b>Sale Closed</b>\n\n"
+            f"<b>Amount:</b> {format_currency(total)}\n"
+            f"<b>Profit:</b> {format_currency(profit)}\n"
+            f"<b>Time:</b> {timestamp}\n\n"
+            f"📊 <b>Today's Totals</b>\n"
+            f"<b>Sales:</b> {format_currency(daily_stats['total_sales'])}\n"
+            f"<b>Profit:</b> {format_currency(daily_stats['total_profit'])}\n"
+            f"<b>Transactions:</b> {daily_stats['transaction_count']}"
+        )
+    else:
+        # Fallback if we couldn't fetch transaction details
+        daily_stats["transaction_count"] += 1
+        message = (
+            f"💰 <b>Sale Closed</b>\n\n"
+            f"<b>Transaction ID:</b> {webhook_data.get('object_id', 'N/A')}\n"
+            f"<b>Time:</b> {timestamp}\n"
+            f"<i>(Could not fetch sale details)</i>\n\n"
+            f"📊 <b>Today's Transactions:</b> {daily_stats['transaction_count']}"
+        )
 
     return message
 
@@ -73,11 +138,19 @@ def webhook():
         return jsonify({"error": "Content-Type must be application/json"}), 400
 
     data = request.get_json()
-
     print(f"Received webhook: {data}")
 
-    message = format_webhook_message(data)
-    send_telegram_message(message)
+    # Only process closed transactions
+    object_type = data.get('object', '')
+    action = data.get('action', '')
+
+    if object_type == 'transaction' and action == 'closed':
+        transaction_id = data.get('object_id')
+        transaction_details = get_transaction_details(transaction_id) if transaction_id else None
+        message = format_sale_message(data, transaction_details)
+        send_telegram_message(message)
+    else:
+        print(f"Ignoring webhook: object={object_type}, action={action}")
 
     return jsonify({"status": "ok"}), 200
 
