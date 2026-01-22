@@ -61,13 +61,13 @@ def format_currency(amount_in_cents):
         return "฿0.00"
 
 
-def generate_sales_chart(transactions, date_from, date_to, title):
-    """Generate a bar chart showing daily sales and profit."""
+def generate_sales_chart(transactions, date_from, date_to, title, finance_transactions=None):
+    """Generate a bar chart showing daily gross profit, net profit, and expenses."""
     # Group transactions by date
     daily_data = {}
     current = date_from
     while current <= date_to:
-        daily_data[current] = {'sales': 0, 'profit': 0}
+        daily_data[current] = {'sales': 0, 'gross_profit': 0, 'expenses': 0}
         current += timedelta(days=1)
 
     for txn in transactions:
@@ -77,22 +77,49 @@ def generate_sales_chart(transactions, date_from, date_to, title):
                 d = datetime.strptime(txn_date, '%Y-%m-%d').date()
                 if d in daily_data:
                     daily_data[d]['sales'] += int(txn.get('sum', 0) or 0)
-                    daily_data[d]['profit'] += int(txn.get('total_profit', 0) or 0)
+                    daily_data[d]['gross_profit'] += int(txn.get('total_profit', 0) or 0)
             except ValueError:
                 continue
 
+    # Process expenses by date
+    if finance_transactions:
+        for txn in finance_transactions:
+            amount = int(txn.get('amount', 0) or 0)
+            comment = txn.get('comment', '')
+
+            # Skip cash payments (sales income)
+            if 'Cash payments' in comment:
+                continue
+
+            # Only count expenses (negative amounts)
+            if amount < 0:
+                txn_date = txn.get('date', '')[:10]
+                if txn_date:
+                    try:
+                        d = datetime.strptime(txn_date, '%Y-%m-%d').date()
+                        if d in daily_data:
+                            daily_data[d]['expenses'] += abs(amount)
+                    except ValueError:
+                        continue
+
     # Prepare data for plotting
     dates = sorted(daily_data.keys())
-    sales = [daily_data[d]['sales'] / 100 for d in dates]  # Convert to THB
-    profits = [daily_data[d]['profit'] / 100 for d in dates]
+    gross_profits = [daily_data[d]['gross_profit'] / 100 for d in dates]  # Convert to THB
+    expenses = [-(daily_data[d]['expenses'] / 100) for d in dates]  # Negative for display
+    net_profits = [(daily_data[d]['gross_profit'] - daily_data[d]['expenses']) / 100 for d in dates]
 
     # Create chart
     fig, ax = plt.subplots(figsize=(10, 5))
     x = range(len(dates))
-    width = 0.35
+    width = 0.27
 
-    bars1 = ax.bar([i - width/2 for i in x], sales, width, label='Sales', color='#2196F3')
-    bars2 = ax.bar([i + width/2 for i in x], profits, width, label='Profit', color='#4CAF50')
+    # Three bars: Gross Profit, Net Profit, Expenses (negative)
+    ax.bar([i - width for i in x], gross_profits, width, label='Gross Profit', color='#4CAF50')
+    ax.bar([i for i in x], net_profits, width, label='Net Profit', color='#2196F3')
+    ax.bar([i + width for i in x], expenses, width, label='Expenses', color='#F44336')
+
+    # Add horizontal line at y=0
+    ax.axhline(y=0, color='black', linewidth=0.5)
 
     ax.set_xlabel('Date')
     ax.set_ylabel('Amount (฿)')
@@ -336,7 +363,7 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Generate and send chart
     if transactions:
-        chart = generate_sales_chart(transactions, monday, today_date, f"Weekly Sales & Profit ({week_display})")
+        chart = generate_sales_chart(transactions, monday, today_date, f"Weekly Profit & Expenses ({week_display})", finance_txns)
         await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
 
 
@@ -381,7 +408,7 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Generate and send chart
     if transactions:
-        chart = generate_sales_chart(transactions, first_of_month, today_date, f"Monthly Sales & Profit ({month_display})")
+        chart = generate_sales_chart(transactions, first_of_month, today_date, f"Monthly Profit & Expenses ({month_display})", finance_txns)
         await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
 
 
@@ -433,30 +460,36 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
 
         transactions = fetch_transactions(date_from_str, date_to_str)
+        finance_txns = fetch_finance_transactions(date_from_str, date_to_str)
+
         summary_data = calculate_summary(transactions)
+        expenses_data = calculate_expenses(finance_txns)
 
         # Calculate daily average for range
         days_count = (date_to - date_from).days + 1
         avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
         avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
+        net_profit = summary_data['total_profit'] - expenses_data['total_expenses']
 
         message = (
             f"📊 <b>Summary for {date_display}</b>\n\n"
             f"<b>Transactions:</b> {summary_data['transaction_count']}\n"
             f"<b>Total Sales:</b> {format_currency(summary_data['total_sales'])}\n"
-            f"<b>Total Profit:</b> {format_currency(summary_data['total_profit'])}\n\n"
+            f"<b>Gross Profit:</b> {format_currency(summary_data['total_profit'])}\n\n"
             f"<b>💵 Cash:</b> {format_currency(summary_data['cash_sales'])}\n"
             f"<b>💳 Card:</b> {format_currency(summary_data['card_sales'])}\n\n"
+            f"<b>💸 Expenses:</b> -{format_currency(expenses_data['total_expenses'])}\n"
+            f"<b>💰 Net Profit:</b> {format_currency(net_profit)}\n\n"
             f"<b>📊 Daily Average ({days_count} days):</b>\n"
             f"• Sales: {format_currency(avg_sales)}\n"
-            f"• Profit: {format_currency(avg_profit)}"
+            f"• Gross Profit: {format_currency(avg_profit)}"
         )
 
         await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
         # Generate and send chart for date range
         if transactions and days_count > 1:
-            chart = generate_sales_chart(transactions, date_from.date(), date_to.date(), f"Sales & Profit ({date_display})")
+            chart = generate_sales_chart(transactions, date_from.date(), date_to.date(), f"Profit & Expenses ({date_display})", finance_txns)
             await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
         return
 
@@ -467,8 +500,11 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
 
     transactions = fetch_transactions(date_str)
+    finance_txns = fetch_finance_transactions(date_str)
+
     summary_data = calculate_summary(transactions)
-    message = format_summary_message(date_display, summary_data)
+    expenses_data = calculate_expenses(finance_txns)
+    message = format_summary_message(date_display, summary_data, expenses_data)
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
