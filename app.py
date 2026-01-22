@@ -39,6 +39,9 @@ last_cash_balance = None
 LARGE_DISCOUNT_THRESHOLD = 20  # Alert if discount > 20%
 LARGE_REFUND_THRESHOLD = 50000  # Alert if refund > 500 THB (in cents)
 
+# Track transactions we've already alerted on (to avoid duplicates)
+alerted_transactions = set()
+
 
 def format_currency(amount_in_cents):
     """Format amount from cents to THB."""
@@ -510,32 +513,74 @@ async def check_theft_indicators():
                     )
                     await send_theft_alert("void", alert_msg)
 
-        # Check for large discounts in recent transactions
+        # Check for suspicious transactions
         transactions = fetch_transactions(today_str)
         for txn in transactions:
-            discount = int(txn.get('discount', 0) or 0)
-            total = int(txn.get('sum', 0) or 0)
+            txn_id = txn.get('transaction_id')
+            alert_key = f"txn_{txn_id}"
 
+            # Skip if we've already alerted on this transaction
+            if alert_key in alerted_transactions:
+                continue
+
+            total = int(txn.get('sum', 0) or 0)
+            payed_sum = int(txn.get('payed_sum', 0) or 0)
+            discount = int(txn.get('discount', 0) or 0)
+            status = txn.get('status', '')
+            staff = txn.get('name', 'Unknown')
+            table = txn.get('table_name', 'N/A')
+
+            # Check for closed order without payment (or underpayment)
+            if status == '2' and total > 0:  # Status 2 = closed
+                if payed_sum == 0:
+                    # Closed with NO payment - high alert!
+                    alerted_transactions.add(alert_key)
+                    alert_msg = (
+                        f"🚨 <b>NO PAYMENT ALERT</b>\n\n"
+                        f"<b>Order closed without payment!</b>\n\n"
+                        f"<b>Order Amount:</b> {format_currency(total)}\n"
+                        f"<b>Paid:</b> {format_currency(0)}\n"
+                        f"<b>Staff:</b> {staff}\n"
+                        f"<b>Table:</b> {table}\n"
+                        f"<b>Transaction:</b> #{txn_id}\n\n"
+                        f"🚨 This requires immediate investigation!"
+                    )
+                    await send_theft_alert("no_payment", alert_msg)
+                elif payed_sum < total:
+                    # Partial payment - also suspicious
+                    shortage = total - payed_sum
+                    alerted_transactions.add(alert_key)
+                    alert_msg = (
+                        f"⚠️ <b>UNDERPAYMENT ALERT</b>\n\n"
+                        f"<b>Order Amount:</b> {format_currency(total)}\n"
+                        f"<b>Paid:</b> {format_currency(payed_sum)}\n"
+                        f"<b>Shortage:</b> {format_currency(shortage)}\n"
+                        f"<b>Staff:</b> {staff}\n"
+                        f"<b>Table:</b> {table}\n"
+                        f"<b>Transaction:</b> #{txn_id}\n\n"
+                        f"⚠️ Please verify this was authorized."
+                    )
+                    await send_theft_alert("underpayment", alert_msg)
+
+            # Check for large discounts
             if total > 0 and discount > 0:
-                # Calculate discount percentage
                 original = total + discount
                 discount_pct = (discount / original) * 100
 
                 if discount_pct > LARGE_DISCOUNT_THRESHOLD:
-                    txn_id = txn.get('transaction_id')
-                    staff = txn.get('name', 'Unknown')
-                    table = txn.get('table_name', 'N/A')
-
-                    alert_msg = (
-                        f"⚠️ <b>LARGE DISCOUNT ALERT</b>\n\n"
-                        f"<b>Discount:</b> {discount_pct:.1f}% ({format_currency(discount)})\n"
-                        f"<b>Final Amount:</b> {format_currency(total)}\n"
-                        f"<b>Staff:</b> {staff}\n"
-                        f"<b>Table:</b> {table}\n"
-                        f"<b>Transaction:</b> #{txn_id}\n\n"
-                        f"⚠️ Please verify this discount was authorized."
-                    )
-                    await send_theft_alert("discount", alert_msg)
+                    discount_key = f"discount_{txn_id}"
+                    if discount_key not in alerted_transactions:
+                        alerted_transactions.add(discount_key)
+                        alert_msg = (
+                            f"⚠️ <b>LARGE DISCOUNT ALERT</b>\n\n"
+                            f"<b>Discount:</b> {discount_pct:.1f}% ({format_currency(discount)})\n"
+                            f"<b>Final Amount:</b> {format_currency(total)}\n"
+                            f"<b>Staff:</b> {staff}\n"
+                            f"<b>Table:</b> {table}\n"
+                            f"<b>Transaction:</b> #{txn_id}\n\n"
+                            f"⚠️ Please verify this discount was authorized."
+                        )
+                        await send_theft_alert("discount", alert_msg)
 
         # Check cash register discrepancies
         shifts = fetch_cash_shifts()
