@@ -1,14 +1,19 @@
 import os
+import io
 import logging
 import asyncio
 from datetime import datetime, date, timedelta
-from telegram import Update, Bot
+from telegram import Update, Bot, InputFile
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.constants import ParseMode
 import requests
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +55,61 @@ def format_currency(amount_in_cents):
         return f"฿{amount:,.2f}"
     except (ValueError, TypeError):
         return "฿0.00"
+
+
+def generate_sales_chart(transactions, date_from, date_to, title):
+    """Generate a bar chart showing daily sales and profit."""
+    # Group transactions by date
+    daily_data = {}
+    current = date_from
+    while current <= date_to:
+        daily_data[current] = {'sales': 0, 'profit': 0}
+        current += timedelta(days=1)
+
+    for txn in transactions:
+        txn_date = txn.get('date_close_date', '')[:10]  # Get YYYY-MM-DD
+        if txn_date:
+            try:
+                d = datetime.strptime(txn_date, '%Y-%m-%d').date()
+                if d in daily_data:
+                    daily_data[d]['sales'] += int(txn.get('sum', 0) or 0)
+                    daily_data[d]['profit'] += int(txn.get('total_profit', 0) or 0)
+            except ValueError:
+                continue
+
+    # Prepare data for plotting
+    dates = sorted(daily_data.keys())
+    sales = [daily_data[d]['sales'] / 100 for d in dates]  # Convert to THB
+    profits = [daily_data[d]['profit'] / 100 for d in dates]
+
+    # Create chart
+    fig, ax = plt.subplots(figsize=(10, 5))
+    x = range(len(dates))
+    width = 0.35
+
+    bars1 = ax.bar([i - width/2 for i in x], sales, width, label='Sales', color='#2196F3')
+    bars2 = ax.bar([i + width/2 for i in x], profits, width, label='Profit', color='#4CAF50')
+
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Amount (฿)')
+    ax.set_title(title)
+    ax.set_xticks(list(x))
+    ax.set_xticklabels([d.strftime('%d %b') for d in dates], rotation=45, ha='right')
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+
+    # Format y-axis with thousands separator
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:,.0f}'))
+
+    plt.tight_layout()
+
+    # Save to BytesIO
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+
+    return buf
 
 
 def fetch_cash_shifts():
@@ -197,6 +257,11 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
+    # Generate and send chart
+    if transactions:
+        chart = generate_sales_chart(transactions, monday, today_date, f"Weekly Sales & Profit ({week_display})")
+        await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
+
 
 async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /month command - get this month's summary."""
@@ -230,6 +295,11 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+    # Generate and send chart
+    if transactions:
+        chart = generate_sales_chart(transactions, first_of_month, today_date, f"Monthly Sales & Profit ({month_display})")
+        await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
 
 
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -298,16 +368,24 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"• Sales: {format_currency(avg_sales)}\n"
             f"• Profit: {format_currency(avg_profit)}"
         )
-    else:
-        # Single date
-        date_str = date_from.strftime('%Y%m%d')
-        date_display = date_from.strftime('%d %b %Y')
 
-        await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
-        transactions = fetch_transactions(date_str)
-        summary_data = calculate_summary(transactions)
-        message = format_summary_message(date_display, summary_data)
+        # Generate and send chart for date range
+        if transactions and days_count > 1:
+            chart = generate_sales_chart(transactions, date_from.date(), date_to.date(), f"Sales & Profit ({date_display})")
+            await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
+        return
+
+    # Single date
+    date_str = date_from.strftime('%Y%m%d')
+    date_display = date_from.strftime('%d %b %Y')
+
+    await update.message.reply_text(f"⏳ Fetching data for {date_display}...")
+
+    transactions = fetch_transactions(date_str)
+    summary_data = calculate_summary(transactions)
+    message = format_summary_message(date_display, summary_data)
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
