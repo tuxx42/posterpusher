@@ -43,6 +43,10 @@ last_cash_balance = None
 # Theft detection thresholds
 LARGE_DISCOUNT_THRESHOLD = 20  # Alert if discount > 20%
 LARGE_REFUND_THRESHOLD = 50000  # Alert if refund > 500 THB (in cents)
+LARGE_EXPENSE_THRESHOLD = 100000  # Alert if single expense > 1000 THB (in cents)
+
+# Track expenses we've already alerted on
+alerted_expenses = set()
 
 # Track transactions we've already alerted on (to avoid duplicates)
 alerted_transactions = set()
@@ -127,6 +131,59 @@ def fetch_cash_shifts():
         return []
 
 
+def fetch_finance_transactions(date_from, date_to=None):
+    """Fetch finance transactions (expenses/income) from Poster API."""
+    url = f"{POSTER_API_URL}/finance.getTransactions"
+    params = {
+        "token": POSTER_ACCESS_TOKEN,
+        "date_from": date_from,
+        "date_to": date_to or date_from
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", [])
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch finance transactions: {e}")
+        return []
+
+
+def calculate_expenses(finance_transactions):
+    """Calculate expense totals from finance transactions."""
+    expenses = []
+    total_expenses = 0
+
+    for txn in finance_transactions:
+        # type "0" = expense/outgoing, amount is negative
+        txn_type = txn.get('type', '')
+        amount = int(txn.get('amount', 0) or 0)
+        comment = txn.get('comment', '')
+        category = txn.get('category_name', '')
+
+        # Skip cash payments (sales income) and positive adjustments
+        if 'Cash payments' in comment:
+            continue
+
+        # Only count actual expenses (negative amounts or type 0 expenses)
+        if amount < 0:
+            expense_amount = abs(amount)
+            total_expenses += expense_amount
+            expenses.append({
+                'amount': expense_amount,
+                'comment': comment,
+                'category': category,
+                'date': txn.get('date', ''),
+                'transaction_id': txn.get('transaction_id', '')
+            })
+
+    return {
+        'total_expenses': total_expenses,
+        'expense_list': expenses
+    }
+
+
 def fetch_transactions(date_from, date_to=None):
     """Fetch transactions for a date or date range from Poster API."""
     url = f"{POSTER_API_URL}/dash.getTransactions"
@@ -168,19 +225,29 @@ def calculate_summary(transactions):
     }
 
 
-def format_summary_message(date_display, summary):
+def format_summary_message(date_display, summary, expenses=None):
     """Format the summary into a Telegram message."""
     if summary["transaction_count"] == 0:
         return f"📊 <b>Summary for {date_display}</b>\n\nNo transactions found."
 
-    return (
+    message = (
         f"📊 <b>Summary for {date_display}</b>\n\n"
         f"<b>Transactions:</b> {summary['transaction_count']}\n"
         f"<b>Total Sales:</b> {format_currency(summary['total_sales'])}\n"
-        f"<b>Total Profit:</b> {format_currency(summary['total_profit'])}\n\n"
+        f"<b>Gross Profit:</b> {format_currency(summary['total_profit'])}\n\n"
         f"<b>💵 Cash:</b> {format_currency(summary['cash_sales'])}\n"
         f"<b>💳 Card:</b> {format_currency(summary['card_sales'])}"
     )
+
+    # Add expenses if provided
+    if expenses and expenses['total_expenses'] > 0:
+        net_profit = summary['total_profit'] - expenses['total_expenses']
+        message += (
+            f"\n\n<b>💸 Expenses:</b> -{format_currency(expenses['total_expenses'])}\n"
+            f"<b>💰 Net Profit:</b> {format_currency(net_profit)}"
+        )
+
+    return message
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -191,7 +258,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/today - Today's sales summary\n"
         "/week - This week's summary\n"
         "/month - This month's summary\n"
-        "/summary DATE [DATE] - Custom date/range\n\n"
+        "/summary DATE [DATE] - Custom date/range\n"
+        "/expenses [DATE] [DATE] - Expense breakdown\n\n"
         "<b>Cash:</b>\n"
         "/cash - Cash register balance\n\n"
         "<b>Real-time:</b>\n"
@@ -218,8 +286,11 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Fetching today's data...")
 
     transactions = fetch_transactions(today_str)
+    finance_txns = fetch_finance_transactions(today_str)
+
     summary = calculate_summary(transactions)
-    message = format_summary_message(today_display, summary)
+    expenses = calculate_expenses(finance_txns)
+    message = format_summary_message(today_display, summary, expenses)
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
@@ -236,23 +307,29 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Fetching data for this week...")
 
     transactions = fetch_transactions(date_from, date_to)
+    finance_txns = fetch_finance_transactions(date_from, date_to)
+
     summary_data = calculate_summary(transactions)
+    expenses_data = calculate_expenses(finance_txns)
 
     days_count = (today_date - monday).days + 1
     avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
     avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
+    net_profit = summary_data['total_profit'] - expenses_data['total_expenses']
 
     message = (
         f"📅 <b>Weekly Report</b>\n"
         f"<i>{week_display}</i>\n\n"
         f"<b>Transactions:</b> {summary_data['transaction_count']}\n"
         f"<b>Total Sales:</b> {format_currency(summary_data['total_sales'])}\n"
-        f"<b>Total Profit:</b> {format_currency(summary_data['total_profit'])}\n\n"
+        f"<b>Gross Profit:</b> {format_currency(summary_data['total_profit'])}\n\n"
         f"<b>💵 Cash:</b> {format_currency(summary_data['cash_sales'])}\n"
         f"<b>💳 Card:</b> {format_currency(summary_data['card_sales'])}\n\n"
+        f"<b>💸 Expenses:</b> -{format_currency(expenses_data['total_expenses'])}\n"
+        f"<b>💰 Net Profit:</b> {format_currency(net_profit)}\n\n"
         f"<b>📊 Daily Average:</b>\n"
         f"• Sales: {format_currency(avg_sales)}\n"
-        f"• Profit: {format_currency(avg_profit)}"
+        f"• Gross Profit: {format_currency(avg_profit)}"
     )
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
@@ -275,23 +352,29 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"⏳ Fetching data for {month_display}...")
 
     transactions = fetch_transactions(date_from, date_to)
+    finance_txns = fetch_finance_transactions(date_from, date_to)
+
     summary_data = calculate_summary(transactions)
+    expenses_data = calculate_expenses(finance_txns)
 
     days_count = today_date.day
     avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
     avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
+    net_profit = summary_data['total_profit'] - expenses_data['total_expenses']
 
     message = (
         f"📆 <b>Monthly Report</b>\n"
         f"<i>{month_display}</i>\n\n"
         f"<b>Transactions:</b> {summary_data['transaction_count']}\n"
         f"<b>Total Sales:</b> {format_currency(summary_data['total_sales'])}\n"
-        f"<b>Total Profit:</b> {format_currency(summary_data['total_profit'])}\n\n"
+        f"<b>Gross Profit:</b> {format_currency(summary_data['total_profit'])}\n\n"
         f"<b>💵 Cash:</b> {format_currency(summary_data['cash_sales'])}\n"
         f"<b>💳 Card:</b> {format_currency(summary_data['card_sales'])}\n\n"
+        f"<b>💸 Expenses:</b> -{format_currency(expenses_data['total_expenses'])}\n"
+        f"<b>💰 Net Profit:</b> {format_currency(net_profit)}\n\n"
         f"<b>📊 Daily Average:</b>\n"
         f"• Sales: {format_currency(avg_sales)}\n"
-        f"• Profit: {format_currency(avg_profit)}"
+        f"• Gross Profit: {format_currency(avg_profit)}"
     )
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
@@ -434,6 +517,86 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+async def expenses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /expenses command - get detailed expense breakdown."""
+    # Default to today if no date specified
+    if not context.args:
+        date_from = date.today()
+        date_to = date_from
+        date_display = date_from.strftime('%d %b %Y')
+    elif len(context.args) == 1:
+        try:
+            date_from = datetime.strptime(context.args[0], '%Y%m%d').date()
+            date_to = date_from
+            date_display = date_from.strftime('%d %b %Y')
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Invalid date format.\n"
+                "Use YYYYMMDD format.\n"
+                "Examples:\n"
+                "/expenses - Today's expenses\n"
+                "/expenses 20260120 - Specific date\n"
+                "/expenses 20260115 20260120 - Date range"
+            )
+            return
+    else:
+        try:
+            date_from = datetime.strptime(context.args[0], '%Y%m%d').date()
+            date_to = datetime.strptime(context.args[1], '%Y%m%d').date()
+            if date_from > date_to:
+                date_from, date_to = date_to, date_from
+            date_display = f"{date_from.strftime('%d %b')} - {date_to.strftime('%d %b %Y')}"
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Invalid date format.\n"
+                "Use YYYYMMDD format.\n"
+                "Example: /expenses 20260115 20260120"
+            )
+            return
+
+    await update.message.reply_text(f"⏳ Fetching expenses for {date_display}...")
+
+    date_from_str = date_from.strftime('%Y%m%d')
+    date_to_str = date_to.strftime('%Y%m%d')
+
+    finance_txns = fetch_finance_transactions(date_from_str, date_to_str)
+    expenses_data = calculate_expenses(finance_txns)
+
+    if not expenses_data['expense_list']:
+        await update.message.reply_text(
+            f"💸 <b>Expenses for {date_display}</b>\n\n"
+            "No expenses recorded.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Group expenses by category
+    by_category = {}
+    for exp in expenses_data['expense_list']:
+        cat = exp['category'] or 'Uncategorized'
+        if cat not in by_category:
+            by_category[cat] = {'total': 0, 'items': []}
+        by_category[cat]['total'] += exp['amount']
+        by_category[cat]['items'].append(exp)
+
+    message = f"💸 <b>Expenses for {date_display}</b>\n\n"
+    message += f"<b>Total:</b> -{format_currency(expenses_data['total_expenses'])}\n\n"
+
+    for category, data in sorted(by_category.items(), key=lambda x: x[1]['total'], reverse=True):
+        message += f"<b>{category}:</b> {format_currency(data['total'])}\n"
+        for item in data['items'][:5]:  # Show top 5 per category
+            comment = item['comment'][:30] + '...' if len(item['comment']) > 30 else item['comment']
+            if comment:
+                message += f"  • {comment}: {format_currency(item['amount'])}\n"
+            else:
+                message += f"  • {format_currency(item['amount'])}\n"
+        if len(data['items']) > 5:
+            message += f"  <i>... and {len(data['items']) - 5} more</i>\n"
+        message += "\n"
+
+    await update.message.reply_text(message.strip(), parse_mode=ParseMode.HTML)
+
+
 def fetch_removed_transactions(date_from, date_to=None):
     """Fetch removed/voided transactions from Poster API."""
     url = f"{POSTER_API_URL}/dash.getTransactions"
@@ -503,7 +666,8 @@ async def alerts_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "You'll receive alerts for:\n"
         "• Voided/cancelled transactions\n"
         "• Large discounts (>20%)\n"
-        "• Suspicious refunds\n"
+        "• Orders closed without payment\n"
+        "• Large expenses (>฿1,000)\n"
         "• Cash register discrepancies\n\n"
         "Use /alerts_off to disable.",
         parse_mode=ParseMode.HTML
@@ -697,6 +861,30 @@ async def check_theft_indicators():
                         )
                         await send_theft_alert("overage", alert_msg)
 
+        # Check for large expenses
+        finance_txns = fetch_finance_transactions(today_str)
+        expenses_data = calculate_expenses(finance_txns)
+
+        for expense in expenses_data['expense_list']:
+            expense_id = expense.get('transaction_id', '')
+            if expense_id in alerted_expenses:
+                continue
+
+            if expense['amount'] >= LARGE_EXPENSE_THRESHOLD:
+                alerted_expenses.add(expense_id)
+                comment = expense['comment'] or 'No description'
+                category = expense['category'] or 'Uncategorized'
+
+                alert_msg = (
+                    f"⚠️ <b>LARGE EXPENSE ALERT</b>\n\n"
+                    f"<b>Amount:</b> {format_currency(expense['amount'])}\n"
+                    f"<b>Category:</b> {category}\n"
+                    f"<b>Description:</b> {comment}\n"
+                    f"<b>Date:</b> {expense['date']}\n\n"
+                    f"⚠️ Please verify this expense was authorized."
+                )
+                await send_theft_alert("large_expense", alert_msg)
+
     except Exception as e:
         logger.error(f"Error in theft detection: {e}")
 
@@ -833,6 +1021,7 @@ def main():
     application.add_handler(CommandHandler("month", month))
     application.add_handler(CommandHandler("summary", summary))
     application.add_handler(CommandHandler("cash", cash))
+    application.add_handler(CommandHandler("expenses", expenses))
     application.add_handler(CommandHandler("subscribe", subscribe))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
     application.add_handler(CommandHandler("alerts", alerts_on))
