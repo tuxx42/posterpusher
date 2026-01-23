@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import asyncio
+import functools
 from datetime import datetime, date, timedelta
 from telegram import Update, Bot, InputFile
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -44,17 +45,25 @@ last_seen_transaction_id = None
 last_seen_void_id = None
 last_cash_balance = None
 
+# Authentication state
+admin_chat_id = None
+approved_users = {}   # {chat_id: {name, username, approved_at}}
+pending_requests = {} # {chat_id: {name, username, requested_at}}
+
 
 def load_config():
     """Load persisted state from config file."""
-    global subscribed_chats, theft_alert_chats
+    global subscribed_chats, theft_alert_chats, admin_chat_id, approved_users, pending_requests
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
                 subscribed_chats = set(config.get('subscribed_chats', []))
                 theft_alert_chats = set(config.get('theft_alert_chats', []))
-                logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats")
+                admin_chat_id = config.get('admin_chat_id')
+                approved_users = config.get('approved_users', {})
+                pending_requests = config.get('pending_requests', {})
+                logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, admin={admin_chat_id}")
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
 
@@ -64,13 +73,50 @@ def save_config():
     try:
         config = {
             'subscribed_chats': list(subscribed_chats),
-            'theft_alert_chats': list(theft_alert_chats)
+            'theft_alert_chats': list(theft_alert_chats),
+            'admin_chat_id': admin_chat_id,
+            'approved_users': approved_users,
+            'pending_requests': pending_requests
         }
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
         logger.info("Config saved")
     except Exception as e:
         logger.error(f"Failed to save config: {e}")
+
+
+def require_auth(func):
+    """Decorator to require user authentication."""
+    @functools.wraps(func)
+    async def wrapper(update, context):
+        chat_id = str(update.effective_chat.id)
+        if admin_chat_id is None:
+            await update.message.reply_text("No admin configured. Send /setup to become admin.")
+            return
+        if chat_id != admin_chat_id and chat_id not in approved_users:
+            if chat_id in pending_requests:
+                await update.message.reply_text("Your request is pending approval.")
+            else:
+                await update.message.reply_text("Access required. Send /request to request access.")
+            return
+        return await func(update, context)
+    return wrapper
+
+
+def require_admin(func):
+    """Decorator to require admin privileges."""
+    @functools.wraps(func)
+    async def wrapper(update, context):
+        chat_id = str(update.effective_chat.id)
+        if admin_chat_id is None:
+            await update.message.reply_text("No admin configured. Send /setup to become admin.")
+            return
+        if chat_id != admin_chat_id:
+            await update.message.reply_text("Admin privileges required.")
+            return
+        return await func(update, context)
+    return wrapper
+
 
 # Theft detection thresholds
 LARGE_DISCOUNT_THRESHOLD = 20  # Alert if discount > 20%
@@ -311,7 +357,42 @@ def format_summary_message(date_display, summary, expenses=None):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
-    await update.message.reply_text(
+    chat_id = str(update.effective_chat.id)
+
+    # No admin configured yet
+    if admin_chat_id is None:
+        await update.message.reply_text(
+            "🍺 <b>Ban Sabai POS Bot</b>\n\n"
+            "No admin configured.\n"
+            "Send /setup to become admin.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Check if user is approved
+    is_admin = chat_id == admin_chat_id
+    is_approved = chat_id in approved_users
+    is_pending = chat_id in pending_requests
+
+    if not is_admin and not is_approved:
+        if is_pending:
+            await update.message.reply_text(
+                "🍺 <b>Ban Sabai POS Bot</b>\n\n"
+                "Your access request is pending approval.\n"
+                "Please wait for admin to approve.",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                "🍺 <b>Ban Sabai POS Bot</b>\n\n"
+                "Access required.\n"
+                "Send /request to request access.",
+                parse_mode=ParseMode.HTML
+            )
+        return
+
+    # User has access - show full menu
+    message = (
         "🍺 <b>Ban Sabai POS Bot</b>\n\n"
         "<b>Reports:</b>\n"
         "/today - Today's sales summary\n"
@@ -327,9 +408,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Security:</b>\n"
         "/alerts - Enable theft detection\n"
         "/alerts_off - Disable theft alerts\n\n"
-        "/help - Show this message",
-        parse_mode=ParseMode.HTML
     )
+
+    # Add admin commands if user is admin
+    if is_admin:
+        message += (
+            "<b>Admin:</b>\n"
+            "/approve - Approve user access\n"
+            "/reject ID - Reject user request\n"
+            "/users - List approved users\n\n"
+        )
+
+    message += "/help - Show this message"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -337,6 +429,234 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await start(update, context)
 
 
+async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /setup command - first user becomes admin."""
+    global admin_chat_id, approved_users
+    chat_id = str(update.effective_chat.id)
+
+    if admin_chat_id is not None:
+        if chat_id == admin_chat_id:
+            await update.message.reply_text("You are already the admin.")
+        else:
+            await update.message.reply_text("Admin already configured. Send /request to request access.")
+        return
+
+    # Set this user as admin
+    admin_chat_id = chat_id
+    user = update.effective_user
+    approved_users[chat_id] = {
+        'name': user.full_name if user else 'Admin',
+        'username': user.username if user else None,
+        'approved_at': datetime.now().isoformat()
+    }
+    save_config()
+
+    await update.message.reply_text(
+        "✅ <b>Admin Setup Complete!</b>\n\n"
+        "You are now the admin with full access.\n\n"
+        "Other users can request access with /request\n"
+        "Manage users with /approve, /reject, /users",
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Admin configured: chat_id={chat_id}")
+
+
+async def request_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /request command - request access from admin."""
+    global pending_requests
+    chat_id = str(update.effective_chat.id)
+
+    if admin_chat_id is None:
+        await update.message.reply_text("No admin configured yet. Send /setup to become admin.")
+        return
+
+    if chat_id == admin_chat_id:
+        await update.message.reply_text("You are the admin. You already have full access.")
+        return
+
+    if chat_id in approved_users:
+        await update.message.reply_text("You already have access.")
+        return
+
+    if chat_id in pending_requests:
+        await update.message.reply_text("Your request is already pending. Please wait for admin approval.")
+        return
+
+    # Add to pending requests
+    user = update.effective_user
+    pending_requests[chat_id] = {
+        'name': user.full_name if user else 'Unknown',
+        'username': user.username if user else None,
+        'requested_at': datetime.now().isoformat()
+    }
+    save_config()
+
+    await update.message.reply_text(
+        "📤 <b>Access Requested!</b>\n\n"
+        "Your request has been sent to the admin.\n"
+        "You'll be notified when it's approved.",
+        parse_mode=ParseMode.HTML
+    )
+
+    # Notify admin
+    if TELEGRAM_BOT_TOKEN and admin_chat_id:
+        try:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            username_str = f"@{user.username}" if user and user.username else "No username"
+            await bot.send_message(
+                chat_id=admin_chat_id,
+                text=(
+                    f"🔔 <b>New Access Request</b>\n\n"
+                    f"<b>Name:</b> {user.full_name if user else 'Unknown'}\n"
+                    f"<b>Username:</b> {username_str}\n"
+                    f"<b>Chat ID:</b> <code>{chat_id}</code>\n\n"
+                    f"Use /approve {chat_id} to approve\n"
+                    f"Use /reject {chat_id} to reject"
+                ),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify admin of access request: {e}")
+
+    logger.info(f"Access request from chat_id={chat_id}")
+
+
+@require_admin
+async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /approve command - approve user access."""
+    global approved_users, pending_requests
+
+    if not context.args:
+        # List pending requests
+        if not pending_requests:
+            await update.message.reply_text("No pending access requests.")
+            return
+
+        message = "📋 <b>Pending Requests</b>\n\n"
+        for chat_id, info in pending_requests.items():
+            username_str = f"@{info['username']}" if info.get('username') else "No username"
+            message += (
+                f"<b>{info['name']}</b>\n"
+                f"Username: {username_str}\n"
+                f"Chat ID: <code>{chat_id}</code>\n"
+                f"/approve {chat_id}\n\n"
+            )
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+        return
+
+    target_chat_id = context.args[0]
+
+    if target_chat_id not in pending_requests:
+        await update.message.reply_text(
+            f"Chat ID {target_chat_id} not found in pending requests.\n"
+            "Use /approve without arguments to see pending requests."
+        )
+        return
+
+    # Move from pending to approved
+    user_info = pending_requests.pop(target_chat_id)
+    approved_users[target_chat_id] = {
+        'name': user_info['name'],
+        'username': user_info.get('username'),
+        'approved_at': datetime.now().isoformat()
+    }
+    save_config()
+
+    await update.message.reply_text(
+        f"✅ <b>User Approved</b>\n\n"
+        f"<b>{user_info['name']}</b> now has access.",
+        parse_mode=ParseMode.HTML
+    )
+
+    # Notify the user
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await bot.send_message(
+                chat_id=target_chat_id,
+                text=(
+                    "✅ <b>Access Granted!</b>\n\n"
+                    "Your access request has been approved.\n"
+                    "Send /help to see available commands."
+                ),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify user of approval: {e}")
+
+    logger.info(f"User approved: chat_id={target_chat_id}")
+
+
+@require_admin
+async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /reject command - reject user access request."""
+    global pending_requests
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /reject <chat_id>\n\n"
+            "Use /approve to see pending requests with chat IDs."
+        )
+        return
+
+    target_chat_id = context.args[0]
+
+    if target_chat_id not in pending_requests:
+        await update.message.reply_text(
+            f"Chat ID {target_chat_id} not found in pending requests."
+        )
+        return
+
+    # Remove from pending
+    user_info = pending_requests.pop(target_chat_id)
+    save_config()
+
+    await update.message.reply_text(
+        f"❌ <b>Request Rejected</b>\n\n"
+        f"<b>{user_info['name']}</b>'s request has been rejected.",
+        parse_mode=ParseMode.HTML
+    )
+
+    # Notify the user
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await bot.send_message(
+                chat_id=target_chat_id,
+                text="❌ Your access request has been denied.",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify user of rejection: {e}")
+
+    logger.info(f"User rejected: chat_id={target_chat_id}")
+
+
+@require_admin
+async def users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /users command - list approved users."""
+    if not approved_users:
+        await update.message.reply_text("No approved users.")
+        return
+
+    message = "👥 <b>Approved Users</b>\n\n"
+    for chat_id, info in approved_users.items():
+        username_str = f"@{info['username']}" if info.get('username') else "No username"
+        is_admin = " (Admin)" if chat_id == admin_chat_id else ""
+        message += (
+            f"<b>{info['name']}</b>{is_admin}\n"
+            f"Username: {username_str}\n"
+            f"Chat ID: <code>{chat_id}</code>\n\n"
+        )
+
+    pending_count = len(pending_requests)
+    if pending_count > 0:
+        message += f"<i>{pending_count} pending request(s) - use /approve to view</i>"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+@require_auth
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /today command - get today's summary."""
     today_str = date.today().strftime('%Y%m%d')
@@ -354,6 +674,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+@require_auth
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /week command - get this week's summary."""
     today_date = date.today()
@@ -399,6 +720,7 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
 
 
+@require_auth
 async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /month command - get this month's summary."""
     today_date = date.today()
@@ -444,6 +766,7 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_photo(photo=chart, caption="📊 Daily breakdown")
 
 
+@require_auth
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /summary command - get summary for a specific date or date range."""
     if not context.args:
@@ -541,6 +864,7 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+@require_auth
 async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /cash command - get current cash register status."""
     await update.message.reply_text("⏳ Fetching cash register data...")
@@ -585,6 +909,7 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+@require_auth
 async def expenses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /expenses command - get detailed expense breakdown."""
     # Default to today if no date specified
@@ -685,6 +1010,7 @@ def fetch_removed_transactions(date_from, date_to=None):
         return []
 
 
+@require_auth
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /subscribe command - enable real-time sale notifications."""
     chat_id = str(update.effective_chat.id)
@@ -704,6 +1030,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"Chat {chat_id} subscribed to real-time updates")
 
 
+@require_auth
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /unsubscribe command - disable real-time sale notifications."""
     chat_id = str(update.effective_chat.id)
@@ -722,6 +1049,7 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     logger.info(f"Chat {chat_id} unsubscribed from real-time updates")
 
 
+@require_auth
 async def alerts_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /alerts command - enable theft detection alerts."""
     chat_id = str(update.effective_chat.id)
@@ -746,6 +1074,7 @@ async def alerts_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"Chat {chat_id} enabled theft detection alerts")
 
 
+@require_auth
 async def alerts_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /alerts_off command - disable theft detection alerts."""
     chat_id = str(update.effective_chat.id)
@@ -1091,6 +1420,11 @@ def main():
     # Add command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("setup", setup))
+    application.add_handler(CommandHandler("request", request_access))
+    application.add_handler(CommandHandler("approve", approve))
+    application.add_handler(CommandHandler("reject", reject))
+    application.add_handler(CommandHandler("users", users))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
