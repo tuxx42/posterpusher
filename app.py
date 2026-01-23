@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import logging
 import asyncio
 from datetime import datetime, date, timedelta
@@ -33,12 +34,43 @@ THAI_TZ = pytz.timezone('Asia/Bangkok')
 # Global scheduler
 scheduler = None
 
+# Config file for persisting state
+CONFIG_FILE = os.environ.get('CONFIG_FILE', 'bot_config.json')
+
 # Track subscribed chats and last seen transaction
 subscribed_chats = set()
 theft_alert_chats = set()
 last_seen_transaction_id = None
 last_seen_void_id = None
 last_cash_balance = None
+
+
+def load_config():
+    """Load persisted state from config file."""
+    global subscribed_chats, theft_alert_chats
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                subscribed_chats = set(config.get('subscribed_chats', []))
+                theft_alert_chats = set(config.get('theft_alert_chats', []))
+                logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats")
+    except Exception as e:
+        logger.error(f"Failed to load config: {e}")
+
+
+def save_config():
+    """Save state to config file."""
+    try:
+        config = {
+            'subscribed_chats': list(subscribed_chats),
+            'theft_alert_chats': list(theft_alert_chats)
+        }
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        logger.info("Config saved")
+    except Exception as e:
+        logger.error(f"Failed to save config: {e}")
 
 # Theft detection thresholds
 LARGE_DISCOUNT_THRESHOLD = 20  # Alert if discount > 20%
@@ -662,6 +694,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     subscribed_chats.add(chat_id)
+    save_config()
     await update.message.reply_text(
         "🔔 <b>Subscribed!</b>\n\n"
         "You'll now receive notifications for each new sale.\n"
@@ -680,6 +713,7 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     subscribed_chats.discard(chat_id)
+    save_config()
     await update.message.reply_text(
         "🔕 <b>Unsubscribed!</b>\n\n"
         "You'll no longer receive real-time sale notifications.",
@@ -697,6 +731,7 @@ async def alerts_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     theft_alert_chats.add(chat_id)
+    save_config()
     await update.message.reply_text(
         "🚨 <b>Theft Detection Enabled!</b>\n\n"
         "You'll receive alerts for:\n"
@@ -720,6 +755,7 @@ async def alerts_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     theft_alert_chats.discard(chat_id)
+    save_config()
     await update.message.reply_text(
         "🔕 <b>Theft Detection Disabled!</b>\n\n"
         "You'll no longer receive theft alerts.",
@@ -1045,6 +1081,9 @@ def main():
     if not POSTER_ACCESS_TOKEN:
         logger.error("POSTER_ACCESS_TOKEN not set")
         return
+
+    # Load persisted state
+    load_config()
 
     # Create application without job queue
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
