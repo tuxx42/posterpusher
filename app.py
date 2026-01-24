@@ -794,6 +794,16 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
+        # Send raw JSON as a separate message
+        raw_json = json.dumps(config_data, indent=2, ensure_ascii=False)
+        # Telegram message limit is 4096 chars, truncate if needed
+        if len(raw_json) > 4000:
+            raw_json = raw_json[:4000] + "\n... (truncated)"
+        await update.message.reply_text(
+            f"<b>Raw Config:</b>\n<pre>{raw_json}</pre>",
+            parse_mode=ParseMode.HTML
+        )
+
     except Exception as e:
         logger.error(f"Error reading config: {e}")
         await update.message.reply_text(f"Error reading config: {e}")
