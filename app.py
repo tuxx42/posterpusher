@@ -4,10 +4,13 @@ import json
 import logging
 import asyncio
 import functools
+import sys
 from datetime import datetime, date, timedelta
 from telegram import Update, Bot, InputFile
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.constants import ParseMode
+from telegram.error import Conflict, TimedOut, NetworkError, RetryAfter
+from telegram.request import HTTPXRequest
 import requests
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -34,6 +37,18 @@ THAI_TZ = pytz.timezone('Asia/Bangkok')
 
 # Global scheduler
 scheduler = None
+
+# Async lock to prevent concurrent API operations causing race conditions
+api_lock = asyncio.Lock()
+
+# Request configuration
+REQUEST_TIMEOUT = 30  # seconds
+REQUEST_READ_TIMEOUT = 30
+REQUEST_WRITE_TIMEOUT = 30
+REQUEST_CONNECT_TIMEOUT = 15
+REQUEST_POOL_TIMEOUT = 10
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # Base delay in seconds for exponential backoff
 
 # Config file for persisting state
 CONFIG_FILE = os.environ.get('CONFIG_FILE', 'bot_config.json')
@@ -116,6 +131,81 @@ def require_admin(func):
             return
         return await func(update, context)
     return wrapper
+
+
+async def clear_webhook():
+    """Clear any existing webhook before starting polling."""
+    try:
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url:
+            logger.info(f"Clearing existing webhook: {webhook_info.url}")
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("Webhook cleared successfully")
+        else:
+            logger.info("No webhook configured")
+    except Exception as e:
+        logger.warning(f"Failed to clear webhook: {e}")
+
+
+async def retry_async(coro_func, *args, max_retries=MAX_RETRIES, **kwargs):
+    """Retry an async operation with exponential backoff."""
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            async with api_lock:
+                return await coro_func(*args, **kwargs)
+        except RetryAfter as e:
+            wait_time = e.retry_after + 1
+            logger.warning(f"Rate limited, waiting {wait_time}s before retry")
+            await asyncio.sleep(wait_time)
+            last_exception = e
+        except TimedOut as e:
+            wait_time = RETRY_DELAY * (2 ** attempt)
+            logger.warning(f"Request timed out (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s")
+            await asyncio.sleep(wait_time)
+            last_exception = e
+        except NetworkError as e:
+            wait_time = RETRY_DELAY * (2 ** attempt)
+            logger.warning(f"Network error (attempt {attempt + 1}/{max_retries}): {e}, retrying in {wait_time}s")
+            await asyncio.sleep(wait_time)
+            last_exception = e
+        except Conflict as e:
+            # Don't retry conflicts - this means another instance is running
+            logger.error(f"Bot conflict detected: {e}")
+            logger.error("Another bot instance is running. Please stop other instances.")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in retry_async: {e}")
+            raise
+
+    # All retries exhausted
+    logger.error(f"All {max_retries} retries exhausted")
+    if last_exception:
+        raise last_exception
+
+
+async def safe_send_message(bot, chat_id, text, parse_mode=None, **kwargs):
+    """Send a message with retry logic and error handling."""
+    async def _send():
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode,
+            read_timeout=REQUEST_READ_TIMEOUT,
+            write_timeout=REQUEST_WRITE_TIMEOUT,
+            connect_timeout=REQUEST_CONNECT_TIMEOUT,
+            **kwargs
+        )
+
+    try:
+        return await retry_async(_send)
+    except Conflict:
+        raise  # Re-raise conflict errors
+    except Exception as e:
+        logger.error(f"Failed to send message to {chat_id}: {e}")
+        return None
 
 
 # Theft detection thresholds
@@ -505,9 +595,9 @@ async def request_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         try:
             bot = Bot(token=TELEGRAM_BOT_TOKEN)
             username_str = f"@{user.username}" if user and user.username else "No username"
-            await bot.send_message(
-                chat_id=admin_chat_id,
-                text=(
+            await safe_send_message(
+                bot, admin_chat_id,
+                (
                     f"🔔 <b>New Access Request</b>\n\n"
                     f"<b>Name:</b> {user.full_name if user else 'Unknown'}\n"
                     f"<b>Username:</b> {username_str}\n"
@@ -574,9 +664,9 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if TELEGRAM_BOT_TOKEN:
         try:
             bot = Bot(token=TELEGRAM_BOT_TOKEN)
-            await bot.send_message(
-                chat_id=target_chat_id,
-                text=(
+            await safe_send_message(
+                bot, target_chat_id,
+                (
                     "✅ <b>Access Granted!</b>\n\n"
                     "Your access request has been approved.\n"
                     "Send /help to see available commands."
@@ -623,9 +713,9 @@ async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if TELEGRAM_BOT_TOKEN:
         try:
             bot = Bot(token=TELEGRAM_BOT_TOKEN)
-            await bot.send_message(
-                chat_id=target_chat_id,
-                text="❌ Your access request has been denied.",
+            await safe_send_message(
+                bot, target_chat_id,
+                "❌ Your access request has been denied.",
                 parse_mode=ParseMode.HTML
             )
         except Exception as e:
@@ -1201,15 +1291,17 @@ async def send_theft_alert(alert_type, message):
 
     for chat_id in theft_alert_chats.copy():
         try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=message,
-                parse_mode=ParseMode.HTML
-            )
+            result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
+            if result is None:
+                logger.warning(f"Failed to send theft alert to {chat_id}")
+        except Conflict:
+            logger.error("Bot conflict detected in send_theft_alert")
+            return  # Stop sending, another instance is running
         except Exception as e:
             logger.error(f"Failed to send theft alert to {chat_id}: {e}")
-            if "chat not found" in str(e).lower():
+            if "chat not found" in str(e).lower() or "bot was blocked" in str(e).lower():
                 theft_alert_chats.discard(chat_id)
+                save_config()
 
 
 async def check_theft_indicators():
@@ -1455,19 +1547,23 @@ async def check_new_transactions():
 
                     for chat_id in subscribed_chats.copy():
                         try:
-                            await bot.send_message(
-                                chat_id=chat_id,
-                                text=message,
-                                parse_mode=ParseMode.HTML
-                            )
+                            result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
+                            if result is None:
+                                logger.warning(f"Failed to send notification to {chat_id}")
+                        except Conflict:
+                            logger.error("Bot conflict detected in check_new_transactions")
+                            return  # Stop, another instance is running
                         except Exception as e:
                             logger.error(f"Failed to send to {chat_id}: {e}")
                             # Remove invalid chats
-                            if "chat not found" in str(e).lower():
+                            if "chat not found" in str(e).lower() or "bot was blocked" in str(e).lower():
                                 subscribed_chats.discard(chat_id)
+                                save_config()
 
                 logger.info(f"Sent {len(new_transactions)} new transaction notifications")
 
+    except Conflict:
+        logger.error("Bot conflict detected - another instance may be running")
     except Exception as e:
         logger.error(f"Error checking new transactions: {e}")
 
@@ -1488,14 +1584,31 @@ async def send_daily_summary():
 
     try:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
-        await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=message,
-            parse_mode=ParseMode.HTML
-        )
-        logger.info("Daily summary sent successfully")
+        result = await safe_send_message(bot, TELEGRAM_CHAT_ID, message, parse_mode=ParseMode.HTML)
+        if result:
+            logger.info("Daily summary sent successfully")
+        else:
+            logger.error("Failed to send daily summary")
+    except Conflict:
+        logger.error("Bot conflict detected in send_daily_summary")
     except Exception as e:
         logger.error(f"Failed to send daily summary: {e}")
+
+
+async def startup(application):
+    """Run startup tasks before polling begins."""
+    logger.info("Running startup tasks...")
+    await clear_webhook()
+    logger.info("Startup complete")
+
+
+async def shutdown(application):
+    """Run cleanup tasks when bot stops."""
+    global scheduler
+    logger.info("Shutting down...")
+    if scheduler:
+        scheduler.shutdown(wait=False)
+    logger.info("Shutdown complete")
 
 
 def main():
@@ -1513,8 +1626,31 @@ def main():
     # Load persisted state
     load_config()
 
-    # Create application without job queue
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    # Configure request with proper timeouts and connection pooling
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        read_timeout=REQUEST_READ_TIMEOUT,
+        write_timeout=REQUEST_WRITE_TIMEOUT,
+        connect_timeout=REQUEST_CONNECT_TIMEOUT,
+        pool_timeout=REQUEST_POOL_TIMEOUT,
+    )
+
+    # Create application with custom request configuration
+    application = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .request(request)
+        .get_updates_request(HTTPXRequest(
+            connection_pool_size=2,
+            read_timeout=60,  # Long polling timeout
+            write_timeout=REQUEST_WRITE_TIMEOUT,
+            connect_timeout=REQUEST_CONNECT_TIMEOUT,
+            pool_timeout=REQUEST_POOL_TIMEOUT,
+        ))
+        .post_init(startup)
+        .post_shutdown(shutdown)
+        .build()
+    )
 
     # Add command handlers
     application.add_handler(CommandHandler("start", start))
@@ -1541,11 +1677,16 @@ def main():
     scheduler = AsyncIOScheduler(timezone=THAI_TZ)
 
     # Poll for new transactions every 30 seconds
+    # coalesce=True: If job is delayed, run once instead of catching up
+    # max_instances=1: Prevent overlapping executions
     scheduler.add_job(
         check_new_transactions,
         'interval',
         seconds=30,
-        id="check_transactions"
+        id="check_transactions",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=30
     )
 
     # Check for theft indicators every 60 seconds
@@ -1553,7 +1694,10 @@ def main():
         check_theft_indicators,
         'interval',
         seconds=60,
-        id="check_theft"
+        id="check_theft",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=60
     )
 
     # Schedule daily summary at 23:59 Bangkok time
@@ -1561,7 +1705,9 @@ def main():
         scheduler.add_job(
             send_daily_summary,
             CronTrigger(hour=23, minute=59, timezone=THAI_TZ),
-            id="daily_summary"
+            id="daily_summary",
+            coalesce=True,
+            max_instances=1
         )
         logger.info(f"Scheduled daily summary at 23:59 Bangkok time to chat {TELEGRAM_CHAT_ID}")
     else:
@@ -1570,9 +1716,25 @@ def main():
     scheduler.start()
     logger.info("Started transaction polling (every 30 seconds)")
 
-    # Start the bot
+    # Start the bot with error handling
     logger.info("Starting bot...")
-    application.run_polling()
+    try:
+        application.run_polling(
+            drop_pending_updates=True,  # Ignore updates that arrived while bot was offline
+            allowed_updates=Update.ALL_TYPES,
+            close_loop=False
+        )
+    except Conflict as e:
+        logger.error(f"Bot conflict error: {e}")
+        logger.error("Another instance is running. Please stop other instances and try again.")
+        if scheduler:
+            scheduler.shutdown(wait=False)
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        if scheduler:
+            scheduler.shutdown(wait=False)
+        raise
 
 
 if __name__ == '__main__':
