@@ -61,14 +61,14 @@ last_seen_void_id = None
 last_cash_balance = None
 
 # Authentication state
-admin_chat_id = None
+admin_chat_ids = set()  # Set of admin chat IDs
 approved_users = {}   # {chat_id: {name, username, approved_at}}
 pending_requests = {} # {chat_id: {name, username, requested_at}}
 
 
 def load_config():
     """Load persisted state from config file."""
-    global subscribed_chats, theft_alert_chats, admin_chat_id, approved_users, pending_requests
+    global subscribed_chats, theft_alert_chats, admin_chat_ids, approved_users, pending_requests
     global last_seen_transaction_id, last_seen_void_id, last_cash_balance
     global alerted_transactions, alerted_expenses
     try:
@@ -77,7 +77,12 @@ def load_config():
                 config = json.load(f)
                 subscribed_chats = set(config.get('subscribed_chats', []))
                 theft_alert_chats = set(config.get('theft_alert_chats', []))
-                admin_chat_id = config.get('admin_chat_id')
+                # Handle both old single admin and new multiple admins format
+                admin_chat_ids = set(config.get('admin_chat_ids', []))
+                # Backwards compatibility: migrate old admin_chat_id to new format
+                old_admin = config.get('admin_chat_id')
+                if old_admin and old_admin not in admin_chat_ids:
+                    admin_chat_ids.add(old_admin)
                 approved_users = config.get('approved_users', {})
                 pending_requests = config.get('pending_requests', {})
                 # Load theft detection state
@@ -86,7 +91,7 @@ def load_config():
                 last_cash_balance = config.get('last_cash_balance')
                 alerted_transactions = set(config.get('alerted_transactions', []))
                 alerted_expenses = set(config.get('alerted_expenses', []))
-                logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, admin={admin_chat_id}")
+                logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, {len(admin_chat_ids)} admins")
                 logger.info(f"Loaded theft state: {len(alerted_transactions)} alerted txns, {len(alerted_expenses)} alerted expenses")
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
@@ -98,7 +103,7 @@ def save_config():
         config = {
             'subscribed_chats': list(subscribed_chats),
             'theft_alert_chats': list(theft_alert_chats),
-            'admin_chat_id': admin_chat_id,
+            'admin_chat_ids': list(admin_chat_ids),
             'approved_users': approved_users,
             'pending_requests': pending_requests,
             # Theft detection state
@@ -120,10 +125,10 @@ def require_auth(func):
     @functools.wraps(func)
     async def wrapper(update, context):
         chat_id = str(update.effective_chat.id)
-        if admin_chat_id is None:
+        if not admin_chat_ids:
             await update.message.reply_text("No admin configured. Send /setup to become admin.")
             return
-        if chat_id != admin_chat_id and chat_id not in approved_users:
+        if chat_id not in admin_chat_ids and chat_id not in approved_users:
             if chat_id in pending_requests:
                 await update.message.reply_text("Your request is pending approval.")
             else:
@@ -138,10 +143,10 @@ def require_admin(func):
     @functools.wraps(func)
     async def wrapper(update, context):
         chat_id = str(update.effective_chat.id)
-        if admin_chat_id is None:
+        if not admin_chat_ids:
             await update.message.reply_text("No admin configured. Send /setup to become admin.")
             return
-        if chat_id != admin_chat_id:
+        if chat_id not in admin_chat_ids:
             await update.message.reply_text("Admin privileges required.")
             return
         return await func(update, context)
@@ -465,7 +470,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = str(update.effective_chat.id)
 
     # No admin configured yet
-    if admin_chat_id is None:
+    if not admin_chat_ids:
         await update.message.reply_text(
             "🍺 <b>Ban Sabai POS Bot</b>\n\n"
             "No admin configured.\n"
@@ -475,7 +480,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Check if user is approved
-    is_admin = chat_id == admin_chat_id
+    is_admin = chat_id in admin_chat_ids
     is_approved = chat_id in approved_users
     is_pending = chat_id in pending_requests
 
@@ -523,6 +528,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/reject ID - Reject user request\n"
             "/users - List approved users\n"
             "/promote ID - Promote user to admin\n"
+            "/demote ID - Remove admin privileges\n"
             "/config - View bot configuration\n"
             "/reset - Reset all configuration\n\n"
         )
@@ -539,18 +545,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /setup command - first user becomes admin."""
-    global admin_chat_id, approved_users
+    global admin_chat_ids, approved_users
     chat_id = str(update.effective_chat.id)
 
-    if admin_chat_id is not None:
-        if chat_id == admin_chat_id:
-            await update.message.reply_text("You are already the admin.")
+    if admin_chat_ids:
+        if chat_id in admin_chat_ids:
+            await update.message.reply_text("You are already an admin.")
         else:
             await update.message.reply_text("Admin already configured. Send /request to request access.")
         return
 
-    # Set this user as admin
-    admin_chat_id = chat_id
+    # Set this user as first admin
+    admin_chat_ids.add(chat_id)
     user = update.effective_user
     approved_users[chat_id] = {
         'name': user.full_name if user else 'Admin',
@@ -561,7 +567,7 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(
         "✅ <b>Admin Setup Complete!</b>\n\n"
-        "You are now the admin with full access.\n\n"
+        "You are now an admin with full access.\n\n"
         "Other users can request access with /request\n"
         "Manage users with /approve, /reject, /users",
         parse_mode=ParseMode.HTML
@@ -574,12 +580,12 @@ async def request_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     global pending_requests
     chat_id = str(update.effective_chat.id)
 
-    if admin_chat_id is None:
+    if not admin_chat_ids:
         await update.message.reply_text("No admin configured yet. Send /setup to become admin.")
         return
 
-    if chat_id == admin_chat_id:
-        await update.message.reply_text("You are the admin. You already have full access.")
+    if chat_id in admin_chat_ids:
+        await update.message.reply_text("You are an admin. You already have full access.")
         return
 
     if chat_id in approved_users:
@@ -601,30 +607,31 @@ async def request_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await update.message.reply_text(
         "📤 <b>Access Requested!</b>\n\n"
-        "Your request has been sent to the admin.\n"
+        "Your request has been sent to the admins.\n"
         "You'll be notified when it's approved.",
         parse_mode=ParseMode.HTML
     )
 
-    # Notify admin
-    if TELEGRAM_BOT_TOKEN and admin_chat_id:
+    # Notify all admins
+    if TELEGRAM_BOT_TOKEN and admin_chat_ids:
         try:
             bot = Bot(token=TELEGRAM_BOT_TOKEN)
             username_str = f"@{user.username}" if user and user.username else "No username"
-            await safe_send_message(
-                bot, admin_chat_id,
-                (
-                    f"🔔 <b>New Access Request</b>\n\n"
-                    f"<b>Name:</b> {user.full_name if user else 'Unknown'}\n"
-                    f"<b>Username:</b> {username_str}\n"
-                    f"<b>Chat ID:</b> <code>{chat_id}</code>\n\n"
-                    f"Use /approve {chat_id} to approve\n"
-                    f"Use /reject {chat_id} to reject"
-                ),
-                parse_mode=ParseMode.HTML
-            )
+            for admin_id in admin_chat_ids:
+                await safe_send_message(
+                    bot, admin_id,
+                    (
+                        f"🔔 <b>New Access Request</b>\n\n"
+                        f"<b>Name:</b> {user.full_name if user else 'Unknown'}\n"
+                        f"<b>Username:</b> {username_str}\n"
+                        f"<b>Chat ID:</b> <code>{chat_id}</code>\n\n"
+                        f"Use /approve {chat_id} to approve\n"
+                        f"Use /reject {chat_id} to reject"
+                    ),
+                    parse_mode=ParseMode.HTML
+                )
         except Exception as e:
-            logger.error(f"Failed to notify admin of access request: {e}")
+            logger.error(f"Failed to notify admins of access request: {e}")
 
     logger.info(f"Access request from chat_id={chat_id}")
 
@@ -750,7 +757,7 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = "👥 <b>Approved Users</b>\n\n"
     for chat_id, info in approved_users.items():
         username_str = f"@{info['username']}" if info.get('username') else "No username"
-        is_admin = " (Admin)" if chat_id == admin_chat_id else ""
+        is_admin = " (Admin)" if chat_id in admin_chat_ids else ""
         message += (
             f"<b>{info['name']}</b>{is_admin}\n"
             f"Username: {username_str}\n"
@@ -767,13 +774,13 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @require_admin
 async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /promote command - promote an approved user to admin."""
-    global admin_chat_id
+    global admin_chat_ids
 
     if not context.args:
-        # List promotable users
-        promotable = {cid: info for cid, info in approved_users.items() if cid != admin_chat_id}
+        # List promotable users (approved users who are not already admins)
+        promotable = {cid: info for cid, info in approved_users.items() if cid not in admin_chat_ids}
         if not promotable:
-            await update.message.reply_text("No other approved users to promote.")
+            await update.message.reply_text("No approved users available to promote.")
             return
 
         message = "👑 <b>Promote User to Admin</b>\n\n"
@@ -789,9 +796,9 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     target_chat_id = context.args[0]
 
-    # Check if target is current admin
-    if target_chat_id == admin_chat_id:
-        await update.message.reply_text("This user is already the admin.")
+    # Check if target is already an admin
+    if target_chat_id in admin_chat_ids:
+        await update.message.reply_text("This user is already an admin.")
         return
 
     # Check if target is an approved user
@@ -803,15 +810,13 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Promote the user
-    old_admin_id = admin_chat_id
-    admin_chat_id = target_chat_id
+    admin_chat_ids.add(target_chat_id)
     save_config()
 
     user_info = approved_users[target_chat_id]
     await update.message.reply_text(
         f"👑 <b>Admin Promoted</b>\n\n"
-        f"<b>{user_info['name']}</b> is now the admin.\n\n"
-        f"You are no longer the admin.",
+        f"<b>{user_info['name']}</b> is now an admin.",
         parse_mode=ParseMode.HTML
     )
 
@@ -822,8 +827,8 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await safe_send_message(
                 bot, target_chat_id,
                 (
-                    "👑 <b>You are now the Admin!</b>\n\n"
-                    "You have been promoted to admin by the previous admin.\n"
+                    "👑 <b>You are now an Admin!</b>\n\n"
+                    "You have been promoted to admin.\n"
                     "Use /help to see available commands."
                 ),
                 parse_mode=ParseMode.HTML
@@ -831,7 +836,75 @@ async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             logger.error(f"Failed to notify new admin: {e}")
 
-    logger.info(f"Admin promoted: {old_admin_id} -> {target_chat_id}")
+    logger.info(f"User promoted to admin: {target_chat_id}")
+
+
+@require_admin
+async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /demote command - remove admin privileges from a user."""
+    global admin_chat_ids
+    chat_id = str(update.effective_chat.id)
+
+    if not context.args:
+        # List demotable admins (other admins, not self)
+        demotable = {cid: approved_users.get(cid, {'name': 'Unknown'})
+                     for cid in admin_chat_ids if cid != chat_id and cid in approved_users}
+        if not demotable:
+            await update.message.reply_text("No other admins to demote.")
+            return
+
+        message = "👑 <b>Demote Admin</b>\n\n"
+        message += "Select an admin to demote:\n\n"
+        for admin_id, info in demotable.items():
+            username_str = f"@{info.get('username')}" if info.get('username') else "no username"
+            message += (
+                f"<b>{info.get('name', 'Unknown')}</b> - {username_str}\n"
+                f"/demote {admin_id}\n\n"
+            )
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+        return
+
+    target_chat_id = context.args[0]
+
+    # Cannot demote yourself
+    if target_chat_id == chat_id:
+        await update.message.reply_text("You cannot demote yourself.")
+        return
+
+    # Check if target is an admin
+    if target_chat_id not in admin_chat_ids:
+        await update.message.reply_text("This user is not an admin.")
+        return
+
+    # Ensure at least one admin remains
+    if len(admin_chat_ids) <= 1:
+        await update.message.reply_text("Cannot demote the last admin. Promote someone else first.")
+        return
+
+    # Demote the user
+    admin_chat_ids.discard(target_chat_id)
+    save_config()
+
+    user_info = approved_users.get(target_chat_id, {'name': 'Unknown'})
+    await update.message.reply_text(
+        f"👑 <b>Admin Demoted</b>\n\n"
+        f"<b>{user_info.get('name', 'Unknown')}</b> is no longer an admin.",
+        parse_mode=ParseMode.HTML
+    )
+
+    # Notify the demoted user
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await safe_send_message(
+                bot, target_chat_id,
+                "ℹ️ Your admin privileges have been removed.",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify demoted admin: {e}")
+
+    logger.info(f"User demoted from admin: {target_chat_id}")
 
 
 @require_admin
@@ -848,16 +921,22 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Format the config nicely
         message = "⚙️ <b>Bot Configuration</b>\n\n"
 
-        # Admin info
-        admin_id = config_data.get('admin_chat_id', 'Not set')
-        message += f"<b>Admin Chat ID:</b> <code>{admin_id}</code>\n\n"
+        # Admin info - handle both old and new format
+        admin_ids = set(config_data.get('admin_chat_ids', []))
+        old_admin = config_data.get('admin_chat_id')
+        if old_admin:
+            admin_ids.add(old_admin)
+        message += f"<b>Admins:</b> {len(admin_ids)}\n"
+        for admin_id in admin_ids:
+            message += f"  • <code>{admin_id}</code>\n"
+        message += "\n"
 
         # Approved users
         users_data = config_data.get('approved_users', {})
         message += f"<b>Approved Users:</b> {len(users_data)}\n"
         for chat_id, info in users_data.items():
             username = f"@{info.get('username')}" if info.get('username') else "no username"
-            is_admin = " (Admin)" if chat_id == admin_id else ""
+            is_admin = " (Admin)" if chat_id in admin_ids else ""
             message += f"  • {info.get('name', 'Unknown')}{is_admin} - {username}\n"
 
         # Pending requests
@@ -1765,6 +1844,7 @@ def main():
     application.add_handler(CommandHandler("reject", reject))
     application.add_handler(CommandHandler("users", users))
     application.add_handler(CommandHandler("promote", promote))
+    application.add_handler(CommandHandler("demote", demote))
     application.add_handler(CommandHandler("config", config))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("today", today))
