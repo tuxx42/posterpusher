@@ -416,7 +416,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "<b>Admin:</b>\n"
             "/approve - Approve user access\n"
             "/reject ID - Reject user request\n"
-            "/users - List approved users\n\n"
+            "/users - List approved users\n"
+            "/config - View bot configuration\n"
+            "/reset - Reset all configuration\n\n"
         )
 
     message += "/help - Show this message"
@@ -654,6 +656,103 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message += f"<i>{pending_count} pending request(s) - use /approve to view</i>"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+@require_admin
+async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /config command - show current configuration."""
+    try:
+        if not os.path.exists(CONFIG_FILE):
+            await update.message.reply_text("No configuration file exists yet.")
+            return
+
+        with open(CONFIG_FILE, 'r') as f:
+            config_data = json.load(f)
+
+        # Format the config nicely
+        message = "⚙️ <b>Bot Configuration</b>\n\n"
+
+        # Admin info
+        admin_id = config_data.get('admin_chat_id', 'Not set')
+        message += f"<b>Admin Chat ID:</b> <code>{admin_id}</code>\n\n"
+
+        # Approved users
+        users_data = config_data.get('approved_users', {})
+        message += f"<b>Approved Users:</b> {len(users_data)}\n"
+        for chat_id, info in users_data.items():
+            username = f"@{info.get('username')}" if info.get('username') else "no username"
+            is_admin = " (Admin)" if chat_id == admin_id else ""
+            message += f"  • {info.get('name', 'Unknown')}{is_admin} - {username}\n"
+
+        # Pending requests
+        pending = config_data.get('pending_requests', {})
+        message += f"\n<b>Pending Requests:</b> {len(pending)}\n"
+        for chat_id, info in pending.items():
+            username = f"@{info.get('username')}" if info.get('username') else "no username"
+            message += f"  • {info.get('name', 'Unknown')} - {username}\n"
+
+        # Subscribed chats
+        subs = config_data.get('subscribed_chats', [])
+        message += f"\n<b>Sale Notifications:</b> {len(subs)} chat(s)\n"
+
+        # Theft alert chats
+        alerts = config_data.get('theft_alert_chats', [])
+        message += f"<b>Theft Alerts:</b> {len(alerts)} chat(s)\n"
+
+        # Config file path
+        message += f"\n<i>File: {CONFIG_FILE}</i>"
+
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error(f"Error reading config: {e}")
+        await update.message.reply_text(f"Error reading config: {e}")
+
+
+@require_admin
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /reset command - delete configuration and reset bot."""
+    global admin_chat_id, approved_users, pending_requests, subscribed_chats, theft_alert_chats
+
+    # Check for confirmation argument
+    if not context.args or context.args[0] != "CONFIRM":
+        await update.message.reply_text(
+            "⚠️ <b>Warning: This will delete all bot data!</b>\n\n"
+            "This includes:\n"
+            "• Admin configuration\n"
+            "• All approved users\n"
+            "• Pending requests\n"
+            "• Subscription settings\n"
+            "• Alert settings\n\n"
+            "To confirm, send:\n"
+            "<code>/reset CONFIRM</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    try:
+        # Delete config file
+        if os.path.exists(CONFIG_FILE):
+            os.remove(CONFIG_FILE)
+
+        # Reset all global state
+        admin_chat_id = None
+        approved_users = {}
+        pending_requests = {}
+        subscribed_chats = set()
+        theft_alert_chats = set()
+
+        await update.message.reply_text(
+            "✅ <b>Configuration Reset</b>\n\n"
+            "All data has been deleted.\n"
+            "Send /setup to configure a new admin.",
+            parse_mode=ParseMode.HTML
+        )
+        logger.info(f"Configuration reset by chat_id={update.effective_chat.id}")
+
+    except Exception as e:
+        logger.error(f"Error resetting config: {e}")
+        await update.message.reply_text(f"Error resetting config: {e}")
 
 
 @require_auth
@@ -1425,6 +1524,8 @@ def main():
     application.add_handler(CommandHandler("approve", approve))
     application.add_handler(CommandHandler("reject", reject))
     application.add_handler(CommandHandler("users", users))
+    application.add_handler(CommandHandler("config", config))
+    application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
