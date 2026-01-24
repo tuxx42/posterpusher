@@ -69,6 +69,8 @@ pending_requests = {} # {chat_id: {name, username, requested_at}}
 def load_config():
     """Load persisted state from config file."""
     global subscribed_chats, theft_alert_chats, admin_chat_id, approved_users, pending_requests
+    global last_seen_transaction_id, last_seen_void_id, last_cash_balance
+    global alerted_transactions, alerted_expenses
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
@@ -78,7 +80,14 @@ def load_config():
                 admin_chat_id = config.get('admin_chat_id')
                 approved_users = config.get('approved_users', {})
                 pending_requests = config.get('pending_requests', {})
+                # Load theft detection state
+                last_seen_transaction_id = config.get('last_seen_transaction_id')
+                last_seen_void_id = config.get('last_seen_void_id')
+                last_cash_balance = config.get('last_cash_balance')
+                alerted_transactions = set(config.get('alerted_transactions', []))
+                alerted_expenses = set(config.get('alerted_expenses', []))
                 logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, admin={admin_chat_id}")
+                logger.info(f"Loaded theft state: {len(alerted_transactions)} alerted txns, {len(alerted_expenses)} alerted expenses")
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
 
@@ -91,7 +100,13 @@ def save_config():
             'theft_alert_chats': list(theft_alert_chats),
             'admin_chat_id': admin_chat_id,
             'approved_users': approved_users,
-            'pending_requests': pending_requests
+            'pending_requests': pending_requests,
+            # Theft detection state
+            'last_seen_transaction_id': last_seen_transaction_id,
+            'last_seen_void_id': last_seen_void_id,
+            'last_cash_balance': last_cash_balance,
+            'alerted_transactions': list(alerted_transactions),
+            'alerted_expenses': list(alerted_expenses)
         }
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
@@ -1404,6 +1419,7 @@ async def check_theft_indicators():
 
             if last_seen_void_id is None:
                 last_seen_void_id = latest_void_id
+                save_config()
             elif latest_void_id != last_seen_void_id:
                 # New void detected
                 new_voids = [
@@ -1558,6 +1574,9 @@ async def check_theft_indicators():
                 )
                 await send_theft_alert("large_expense", alert_msg)
 
+        # Save state after checking to persist alerted items
+        save_config()
+
     except Exception as e:
         logger.error(f"Error in theft detection: {e}")
 
@@ -1588,6 +1607,7 @@ async def check_new_transactions():
         # First run - just set the last seen ID
         if last_seen_transaction_id is None:
             last_seen_transaction_id = latest_id
+            save_config()
             logger.info(f"Initialized last_seen_transaction_id to {latest_id}")
             return
 
@@ -1642,6 +1662,9 @@ async def check_new_transactions():
                                 save_config()
 
                 logger.info(f"Sent {len(new_transactions)} new transaction notifications")
+
+            # Save state after processing new transactions
+            save_config()
 
     except Conflict:
         logger.error("Bot conflict detected - another instance may be running")
