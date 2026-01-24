@@ -507,6 +507,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/approve - Approve user access\n"
             "/reject ID - Reject user request\n"
             "/users - List approved users\n"
+            "/promote ID - Promote user to admin\n"
             "/config - View bot configuration\n"
             "/reset - Reset all configuration\n\n"
         )
@@ -746,6 +747,76 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message += f"<i>{pending_count} pending request(s) - use /approve to view</i>"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+@require_admin
+async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /promote command - promote an approved user to admin."""
+    global admin_chat_id
+
+    if not context.args:
+        # List promotable users
+        promotable = {cid: info for cid, info in approved_users.items() if cid != admin_chat_id}
+        if not promotable:
+            await update.message.reply_text("No other approved users to promote.")
+            return
+
+        message = "👑 <b>Promote User to Admin</b>\n\n"
+        message += "Select a user to promote:\n\n"
+        for chat_id, info in promotable.items():
+            username_str = f"@{info['username']}" if info.get('username') else "no username"
+            message += (
+                f"<b>{info['name']}</b> - {username_str}\n"
+                f"/promote {chat_id}\n\n"
+            )
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+        return
+
+    target_chat_id = context.args[0]
+
+    # Check if target is current admin
+    if target_chat_id == admin_chat_id:
+        await update.message.reply_text("This user is already the admin.")
+        return
+
+    # Check if target is an approved user
+    if target_chat_id not in approved_users:
+        await update.message.reply_text(
+            f"Chat ID {target_chat_id} is not an approved user.\n"
+            "Use /users to see approved users."
+        )
+        return
+
+    # Promote the user
+    old_admin_id = admin_chat_id
+    admin_chat_id = target_chat_id
+    save_config()
+
+    user_info = approved_users[target_chat_id]
+    await update.message.reply_text(
+        f"👑 <b>Admin Promoted</b>\n\n"
+        f"<b>{user_info['name']}</b> is now the admin.\n\n"
+        f"You are no longer the admin.",
+        parse_mode=ParseMode.HTML
+    )
+
+    # Notify the new admin
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await safe_send_message(
+                bot, target_chat_id,
+                (
+                    "👑 <b>You are now the Admin!</b>\n\n"
+                    "You have been promoted to admin by the previous admin.\n"
+                    "Use /help to see available commands."
+                ),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify new admin: {e}")
+
+    logger.info(f"Admin promoted: {old_admin_id} -> {target_chat_id}")
 
 
 @require_admin
@@ -1670,6 +1741,7 @@ def main():
     application.add_handler(CommandHandler("approve", approve))
     application.add_handler(CommandHandler("reject", reject))
     application.add_handler(CommandHandler("users", users))
+    application.add_handler(CommandHandler("promote", promote))
     application.add_handler(CommandHandler("config", config))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("today", today))
