@@ -1058,6 +1058,71 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+@require_admin
+async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /resend command - resend last 2 closed transactions as notifications."""
+    today_str = date.today().strftime('%Y%m%d')
+
+    await update.message.reply_text("⏳ Fetching and resending last 2 transactions...")
+
+    transactions = fetch_transactions(today_str)
+
+    if not transactions:
+        await update.message.reply_text("No transactions found for today.")
+        return
+
+    # Filter to closed transactions only and sort by transaction_id descending
+    closed_txns = [t for t in transactions if str(t.get('status')) == '1']
+    closed_txns.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
+
+    if not closed_txns:
+        await update.message.reply_text("No closed transactions found for today.")
+        return
+
+    # Take last 2
+    recent = closed_txns[:2]
+
+    if not subscribed_chats:
+        await update.message.reply_text("No subscribed chats to send to.")
+        return
+
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    sent_count = 0
+
+    for txn in reversed(recent):  # Send oldest first
+        txn_id = txn.get('transaction_id')
+        total = int(txn.get('sum', 0) or 0)
+        profit = int(txn.get('total_profit', 0) or 0)
+        payed_cash = int(txn.get('payed_cash', 0) or 0)
+        payed_card = int(txn.get('payed_card', 0) or 0)
+        table_name = txn.get('table_name', '')
+
+        if payed_card > 0 and payed_cash > 0:
+            payment = "💳+💵"
+        elif payed_card > 0:
+            payment = "💳 Card"
+        else:
+            payment = "💵 Cash"
+
+        message = (
+            f"🔄 <b>Resend Test - Sale #{txn_id}</b>\n\n"
+            f"<b>Amount:</b> {format_currency(total)}\n"
+            f"<b>Profit:</b> {format_currency(profit)}\n"
+            f"<b>Payment:</b> {payment}\n"
+            f"<b>Table:</b> {table_name}"
+        )
+
+        for chat_id in subscribed_chats.copy():
+            try:
+                result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
+                if result:
+                    sent_count += 1
+            except Exception as e:
+                logger.error(f"Failed to resend to {chat_id}: {e}")
+
+    await update.message.reply_text(f"✅ Resent {len(recent)} transactions to {len(subscribed_chats)} chats ({sent_count} messages sent).")
+
+
 @require_auth
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /today command - get today's summary."""
@@ -1914,6 +1979,7 @@ def main():
     application.add_handler(CommandHandler("config", config))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("debug", debug))
+    application.add_handler(CommandHandler("resend", resend))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
