@@ -1073,7 +1073,8 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Filter to closed transactions only and sort by transaction_id descending
-    closed_txns = [t for t in transactions if str(t.get('status')) == '2']
+    # Filter for closed transactions with actual sales (exclude voided with sum=0)
+    closed_txns = [t for t in transactions if str(t.get('status')) == '2' and int(t.get('sum', 0) or 0) > 0]
     closed_txns.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
 
     if not closed_txns:
@@ -1851,11 +1852,12 @@ async def check_new_transactions():
 
         # Check if there are newer transactions (using numeric comparison)
         if latest_id_int > last_seen_int:
-            # Find all new closed transactions (status 0 = open, 1 = closed)
+            # Find all new closed transactions with actual sales (status 2 = closed, sum > 0 = not voided)
             new_transactions = [
                 t for t in transactions
                 if int(t.get('transaction_id', 0)) > last_seen_int
-                and str(t.get('status')) == '1'  # Only closed transactions
+                and str(t.get('status')) == '2'  # Only closed transactions
+                and int(t.get('sum', 0) or 0) > 0  # Exclude voided/cancelled (sum=0)
             ]
 
             logger.info(f"Found {len(new_transactions)} new closed transactions (latest: {latest_id_int}, last seen: {last_seen_int})")
