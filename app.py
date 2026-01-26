@@ -23,7 +23,7 @@ from matplotlib.ticker import FuncFormatter
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
@@ -1034,7 +1034,8 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text("⏳ Fetching raw transaction data...")
 
-    transactions = fetch_transactions(today_str)
+    transactions = [t for t in fetch_transactions(today_str)
+                    if str(t.get('status')) == '2']
 
     if not transactions:
         await update.message.reply_text("No transactions found for today.")
@@ -1044,7 +1045,7 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     transactions.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
     recent = transactions[:3]
 
-    message = f"<b>🔍 Debug: Last {len(recent)} transactions</b>\n\n"
+    message = f"<b>🔍 Debug: Last closed {len(recent)} transactions</b>\n\n"
 
     for txn in recent:
         txn_id = txn.get('transaction_id', 'N/A')
@@ -1072,7 +1073,7 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Filter to closed transactions only and sort by transaction_id descending
-    closed_txns = [t for t in transactions if str(t.get('status')) == '1']
+    closed_txns = [t for t in transactions if str(t.get('status')) == '2']
     closed_txns.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
 
     if not closed_txns:
