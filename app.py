@@ -1747,13 +1747,14 @@ async def check_new_transactions():
 
         # Check if there are newer transactions (using numeric comparison)
         if latest_id_int > last_seen_int:
-            # Find all new transactions
+            # Find all new closed transactions (status 0 = open, 1 = closed)
             new_transactions = [
                 t for t in transactions
                 if int(t.get('transaction_id', 0)) > last_seen_int
+                and str(t.get('status')) == '1'  # Only closed transactions
             ]
 
-            logger.info(f"Found {len(new_transactions)} new transactions (latest: {latest_id_int}, last seen: {last_seen_int})")
+            logger.info(f"Found {len(new_transactions)} new closed transactions (latest: {latest_id_int}, last seen: {last_seen_int})")
 
             if new_transactions:
                 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -1776,10 +1777,6 @@ async def check_new_transactions():
                         payment = "💳 Card"
                     else:
                         payment = "💵 Cash"
-
-                    if not total and not profit:
-                        logger.info("ERROR INCOMFING")
-                        logger.info(str(new_transaction))
 
                     message = (
                         f"💰 <b>New Sale!</b>\n\n"
