@@ -5,20 +5,49 @@ import logging
 import asyncio
 import functools
 import sys
+import argparse
 from datetime import datetime, date, timedelta
-from telegram import Update, Bot, InputFile
-from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram.constants import ParseMode
-from telegram.error import Conflict, TimedOut, NetworkError, RetryAfter
-from telegram.request import HTTPXRequest
 import requests
-import pytz
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
+
+# Check if running in CLI mode before importing telegram
+CLI_MODE = '--cli' in sys.argv
+
+if not CLI_MODE:
+    from telegram import Update, Bot, InputFile
+    from telegram.ext import Application, CommandHandler, ContextTypes
+    from telegram.constants import ParseMode
+    from telegram.error import Conflict, TimedOut, NetworkError, RetryAfter
+    from telegram.request import HTTPXRequest
+    import pytz
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import FuncFormatter
+else:
+    # Mock classes for CLI mode
+    class Update:
+        pass
+    class Bot:
+        def __init__(self, token=None):
+            self.token = token
+    InputFile = None
+    Application = None
+    CommandHandler = None
+    class ContextTypes:
+        DEFAULT_TYPE = None
+    class ParseMode:
+        HTML = 'HTML'
+    Conflict = Exception
+    TimedOut = Exception
+    NetworkError = Exception
+    RetryAfter = Exception
+    HTTPXRequest = None
+    import pytz
+    AsyncIOScheduler = None
+    CronTrigger = None
+    plt = None
 
 # Configure logging
 logging.basicConfig(
@@ -1966,6 +1995,118 @@ async def shutdown(application):
     logger.info("Shutdown complete")
 
 
+# ============================================================
+# CLI Test Mode - for local testing without Telegram
+# ============================================================
+
+class MockMessage:
+    """Mock Telegram message for CLI testing."""
+    def __init__(self, chat_id="cli_test_user"):
+        self.chat_id = chat_id
+        self.responses = []
+
+    async def reply_text(self, text, parse_mode=None, **kwargs):
+        # Strip HTML tags for cleaner CLI output
+        import re
+        clean_text = re.sub(r'<[^>]+>', '', text)
+        print(f"\n{clean_text}")
+        self.responses.append(text)
+
+
+class MockChat:
+    """Mock Telegram chat for CLI testing."""
+    def __init__(self, chat_id="cli_test_user"):
+        self.id = chat_id
+
+
+class MockUpdate:
+    """Mock Telegram Update for CLI testing."""
+    def __init__(self, chat_id="cli_test_user"):
+        self.message = MockMessage(chat_id)
+        self.effective_chat = MockChat(chat_id)
+
+
+class MockContext:
+    """Mock Telegram Context for CLI testing."""
+    def __init__(self, args=None):
+        self.args = args or []
+
+
+async def cli_mode():
+    """Run bot in CLI test mode - accepts commands from stdin."""
+    print("=" * 60)
+    print("CLI Test Mode - Type commands like /debug, /resend, /today")
+    print("Type 'exit' or 'quit' to stop")
+    print("=" * 60)
+
+    # Load config
+    load_config()
+
+    # Make CLI user an admin for testing
+    global admin_chat_ids, approved_users, subscribed_chats
+    cli_chat_id = "cli_test_user"
+    admin_chat_ids.add(cli_chat_id)
+    approved_users[cli_chat_id] = {"name": "CLI Tester", "username": "cli"}
+    subscribed_chats.add(cli_chat_id)
+    print(f"\nCLI user '{cli_chat_id}' added as admin and subscriber")
+
+    # Map commands to handlers
+    commands = {
+        '/debug': debug,
+        '/resend': resend,
+        '/loglevel': loglevel,
+        '/config': config,
+        '/today': today,
+        '/week': week,
+        '/month': month,
+        '/summary': summary,
+        '/cash': cash,
+        '/expenses': expenses,
+        '/users': users,
+        '/help': help_command,
+        '/check_transactions': lambda u, c: check_new_transactions(),
+        '/check_theft': lambda u, c: check_theft_indicators(),
+    }
+
+    while True:
+        try:
+            user_input = input("\n> ").strip()
+        except EOFError:
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ('exit', 'quit'):
+            print("Exiting CLI mode...")
+            break
+
+        # Parse command and args
+        parts = user_input.split()
+        cmd = parts[0].lower()
+        args = parts[1:] if len(parts) > 1 else []
+
+        # Add leading slash if missing
+        if not cmd.startswith('/'):
+            cmd = '/' + cmd
+
+        if cmd in commands:
+            update = MockUpdate(cli_chat_id)
+            context = MockContext(args)
+            try:
+                handler = commands[cmd]
+                result = handler(update, context)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                print(f"Error: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"Unknown command: {cmd}")
+            print(f"Available: {', '.join(sorted(commands.keys()))}")
+
+
 def main():
     """Start the bot."""
     global scheduler
@@ -2098,4 +2239,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Ban Sabai POS Telegram Bot')
+    parser.add_argument('--cli', action='store_true', help='Run in CLI test mode (no Telegram)')
+    args = parser.parse_args()
+
+    if args.cli:
+        asyncio.run(cli_mode())
+    else:
+        main()
