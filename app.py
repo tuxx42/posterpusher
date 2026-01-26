@@ -456,7 +456,7 @@ def format_summary_message(date_display, summary, expenses=None):
 
     # Add expenses if provided
     if expenses and expenses['total_expenses'] > 0:
-        net_profit = summary['total_profit'] - expenses['total_expenses']
+        net_profit = summary['total_sales'] - expenses['total_expenses']
         message += (
             f"\n\n<b>💸 Expenses:</b> -{format_currency(expenses['total_expenses'])}\n"
             f"<b>💰 Net Profit:</b> {format_currency(net_profit)}"
@@ -977,7 +977,8 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @require_admin
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /reset command - delete configuration and reset bot."""
-    global admin_chat_id, approved_users, pending_requests, subscribed_chats, theft_alert_chats
+    global admin_chat_ids, approved_users, pending_requests, subscribed_chats, theft_alert_chats
+    global last_seen_transaction_id, last_seen_void_id, last_cash_balance, alerted_transactions, alerted_expenses
 
     # Check for confirmation argument
     if not context.args or context.args[0] != "CONFIRM":
@@ -988,7 +989,8 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "• All approved users\n"
             "• Pending requests\n"
             "• Subscription settings\n"
-            "• Alert settings\n\n"
+            "• Alert settings\n"
+            "• Theft detection state\n\n"
             "To confirm, send:\n"
             "<code>/reset CONFIRM</code>",
             parse_mode=ParseMode.HTML
@@ -1001,11 +1003,16 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             os.remove(CONFIG_FILE)
 
         # Reset all global state
-        admin_chat_id = None
+        admin_chat_ids = set()
         approved_users = {}
         pending_requests = {}
         subscribed_chats = set()
         theft_alert_chats = set()
+        last_seen_transaction_id = None
+        last_seen_void_id = None
+        last_cash_balance = None
+        alerted_transactions = set()
+        alerted_expenses = set()
 
         await update.message.reply_text(
             "✅ <b>Configuration Reset</b>\n\n"
@@ -1059,7 +1066,7 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     days_count = (today_date - monday).days + 1
     avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
     avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
-    net_profit = summary_data['total_profit'] - expenses_data['total_expenses']
+    net_profit = summary_data['total_sales'] - expenses_data['total_expenses']
 
     message = (
         f"📅 <b>Weekly Report</b>\n"
@@ -1676,6 +1683,7 @@ async def check_new_transactions():
         transactions = fetch_transactions(today_str)
 
         if not transactions:
+            logger.debug("No transactions found for today")
             return
 
         # Sort by transaction_id to get the latest
@@ -1683,27 +1691,45 @@ async def check_new_transactions():
         latest_txn = transactions[0]
         latest_id = latest_txn.get('transaction_id')
 
-        # First run - just set the last seen ID
-        if last_seen_transaction_id is None:
-            last_seen_transaction_id = latest_id
-            save_config()
-            logger.info(f"Initialized last_seen_transaction_id to {latest_id}")
+        # Convert to int for consistent comparison (API may return string or int)
+        try:
+            latest_id_int = int(latest_id) if latest_id else 0
+        except (ValueError, TypeError):
+            logger.error(f"Invalid latest transaction ID: {latest_id}")
             return
 
-        # Check if there's a new transaction
-        if latest_id != last_seen_transaction_id:
+        # First run - just set the last seen ID
+        if last_seen_transaction_id is None:
+            last_seen_transaction_id = latest_id_int
+            save_config()
+            logger.info(f"Initialized last_seen_transaction_id to {latest_id_int}")
+            return
+
+        # Convert last seen to int for comparison
+        try:
+            last_seen_int = int(last_seen_transaction_id) if last_seen_transaction_id else 0
+        except (ValueError, TypeError):
+            logger.error(f"Invalid last_seen_transaction_id: {last_seen_transaction_id}, resetting")
+            last_seen_transaction_id = latest_id_int
+            save_config()
+            return
+
+        # Check if there are newer transactions (using numeric comparison)
+        if latest_id_int > last_seen_int:
             # Find all new transactions
             new_transactions = [
                 t for t in transactions
-                if int(t.get('transaction_id', 0)) > int(last_seen_transaction_id)
+                if int(t.get('transaction_id', 0)) > last_seen_int
             ]
 
-            last_seen_transaction_id = latest_id
+            logger.info(f"Found {len(new_transactions)} new transactions (latest: {latest_id_int}, last seen: {last_seen_int})")
 
             if new_transactions:
                 bot = Bot(token=TELEGRAM_BOT_TOKEN)
+                notifications_sent = 0
 
                 for txn in reversed(new_transactions):  # Send oldest first
+                    txn_id = txn.get('transaction_id')
                     total = int(txn.get('sum', 0) or 0)
                     profit = int(txn.get('total_profit', 0) or 0)
                     payed_cash = int(txn.get('payed_cash', 0) or 0)
@@ -1729,7 +1755,9 @@ async def check_new_transactions():
                         try:
                             result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
                             if result is None:
-                                logger.warning(f"Failed to send notification to {chat_id}")
+                                logger.warning(f"Failed to send notification for txn {txn_id} to {chat_id}")
+                            else:
+                                notifications_sent += 1
                         except Conflict:
                             logger.error("Bot conflict detected in check_new_transactions")
                             return  # Stop, another instance is running
@@ -1740,15 +1768,18 @@ async def check_new_transactions():
                                 subscribed_chats.discard(chat_id)
                                 save_config()
 
-                logger.info(f"Sent {len(new_transactions)} new transaction notifications")
+                logger.info(f"Sent {notifications_sent} notifications for {len(new_transactions)} new transactions")
 
-            # Save state after processing new transactions
+            # Update last seen ID only after successful processing
+            last_seen_transaction_id = latest_id_int
             save_config()
+        else:
+            logger.debug(f"No new transactions (latest: {latest_id_int}, last seen: {last_seen_int})")
 
     except Conflict:
         logger.error("Bot conflict detected - another instance may be running")
     except Exception as e:
-        logger.error(f"Error checking new transactions: {e}")
+        logger.error(f"Error checking new transactions: {e}", exc_info=True)
 
 
 async def send_daily_summary():
