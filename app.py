@@ -1777,6 +1777,10 @@ async def check_new_transactions():
                     else:
                         payment = "💵 Cash"
 
+                    if not total and not profit:
+                        logger.info("ERROR INCOMFING")
+                        logger.info(str(new_transaction))
+
                     message = (
                         f"💰 <b>New Sale!</b>\n\n"
                         f"<b>Amount:</b> {format_currency(total)}\n"
