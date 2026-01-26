@@ -1124,6 +1124,43 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"✅ Resent {len(recent)} transactions to {len(subscribed_chats)} chats ({sent_count} messages sent).")
 
 
+@require_admin
+async def loglevel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /loglevel command - view or set logging level."""
+    valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR']
+
+    if not context.args:
+        # Show current level
+        current_level = logging.getLevelName(logger.getEffectiveLevel())
+        await update.message.reply_text(
+            f"📋 <b>Current log level:</b> {current_level}\n\n"
+            f"<b>Usage:</b> <code>/loglevel LEVEL</code>\n"
+            f"<b>Valid levels:</b> {', '.join(valid_levels)}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    level_name = context.args[0].upper()
+
+    if level_name not in valid_levels:
+        await update.message.reply_text(
+            f"❌ Invalid level: {level_name}\n"
+            f"<b>Valid levels:</b> {', '.join(valid_levels)}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    level = getattr(logging, level_name)
+    logger.setLevel(level)
+    logging.getLogger().setLevel(level)  # Also set root logger
+
+    await update.message.reply_text(
+        f"✅ Log level set to <b>{level_name}</b>",
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Log level changed to {level_name} by chat_id={update.effective_chat.id}")
+
+
 @require_auth
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /today command - get today's summary."""
@@ -1981,6 +2018,7 @@ def main():
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("debug", debug))
     application.add_handler(CommandHandler("resend", resend))
+    application.add_handler(CommandHandler("loglevel", loglevel))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
