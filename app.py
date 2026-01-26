@@ -1027,6 +1027,37 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Error resetting config: {e}")
 
 
+@require_admin
+async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /debug command - show raw API transaction data."""
+    today_str = date.today().strftime('%Y%m%d')
+
+    await update.message.reply_text("⏳ Fetching raw transaction data...")
+
+    transactions = fetch_transactions(today_str)
+
+    if not transactions:
+        await update.message.reply_text("No transactions found for today.")
+        return
+
+    # Sort by transaction_id descending and take last 3
+    transactions.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
+    recent = transactions[:3]
+
+    message = f"<b>🔍 Debug: Last {len(recent)} transactions</b>\n\n"
+
+    for txn in recent:
+        txn_id = txn.get('transaction_id', 'N/A')
+        message += f"<b>Transaction ID:</b> {txn_id}\n"
+        message += f"<pre>{json.dumps(txn, indent=2, ensure_ascii=False)[:1000]}</pre>\n\n"
+
+    # Also show last_seen_transaction_id
+    message += f"<b>last_seen_transaction_id:</b> {last_seen_transaction_id}\n"
+    message += f"<b>Type:</b> {type(last_seen_transaction_id).__name__}"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
 @require_auth
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /today command - get today's summary."""
@@ -1112,7 +1143,7 @@ async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     days_count = today_date.day
     avg_sales = summary_data['total_sales'] // days_count if days_count > 0 else 0
     avg_profit = summary_data['total_profit'] // days_count if days_count > 0 else 0
-    net_profit = summary_data['total_profit'] - expenses_data['total_expenses']
+    net_profit = summary_data['total_sales'] - expenses_data['total_expenses']
 
     message = (
         f"📆 <b>Monthly Report</b>\n"
@@ -1730,8 +1761,11 @@ async def check_new_transactions():
 
                 for txn in reversed(new_transactions):  # Send oldest first
                     txn_id = txn.get('transaction_id')
+                    # Debug: log raw transaction data
+                    logger.debug(f"Raw transaction data for {txn_id}: {txn}")
                     total = int(txn.get('sum', 0) or 0)
                     profit = int(txn.get('total_profit', 0) or 0)
+                    logger.debug(f"Parsed values - total: {total}, profit: {profit}")
                     payed_cash = int(txn.get('payed_cash', 0) or 0)
                     payed_card = int(txn.get('payed_card', 0) or 0)
                     table_name = txn.get('table_name', '')
@@ -1878,6 +1912,7 @@ def main():
     application.add_handler(CommandHandler("demote", demote))
     application.add_handler(CommandHandler("config", config))
     application.add_handler(CommandHandler("reset", reset))
+    application.add_handler(CommandHandler("debug", debug))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
