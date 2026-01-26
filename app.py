@@ -1091,6 +1091,7 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     sent_count = 0
 
     for txn in reversed(recent):  # Send oldest first
+        logging.debug(f"Raw txn: {txn}")
         txn_id = txn.get('transaction_id')
         total = int(txn.get('sum', 0) or 0)
         profit = int(txn.get('total_profit', 0) or 0)
