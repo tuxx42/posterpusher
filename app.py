@@ -380,8 +380,8 @@ def fetch_finance_transactions(date_from, date_to=None):
     url = f"{POSTER_API_URL}/finance.getTransactions"
     params = {
         "token": POSTER_ACCESS_TOKEN,
-        "date_from": date_from,
-        "date_to": date_to or date_from
+        "dateFrom": date_from,
+        "dateTo": date_to or date_from
     }
 
     try:
