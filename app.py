@@ -481,6 +481,24 @@ def fetch_stock_levels():
         return []
 
 
+def fetch_transaction_products(transaction_id):
+    """Fetch products for a specific transaction from Poster API."""
+    url = f"{POSTER_API_URL}/dash.getTransactionProducts"
+    params = {
+        "token": POSTER_ACCESS_TOKEN,
+        "transaction_id": transaction_id
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", [])
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch transaction products: {e}")
+        return []
+
+
 def fetch_ingredient_usage(date_from, date_to=None):
     """Fetch ingredient usage/movement from Poster API."""
     url = f"{POSTER_API_URL}/storage.getReportMovement"
@@ -1152,10 +1170,18 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @require_admin
 async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /resend command - resend last 2 closed transactions as notifications."""
+    """Handle /resend command - resend last N closed transactions as notifications."""
+    # Default to 2, allow override with argument
+    count = 2
+    if context.args:
+        try:
+            count = min(int(context.args[0]), 10)  # Max 10
+        except ValueError:
+            pass
+
     today_str = date.today().strftime('%Y%m%d')
 
-    await update.message.reply_text("⏳ Fetching and resending last 2 transactions...")
+    await update.message.reply_text(f"⏳ Fetching and resending last {count} transactions...")
 
     transactions = fetch_transactions(today_str)
 
@@ -1163,7 +1189,6 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No transactions found for today.")
         return
 
-    # Filter to closed transactions only and sort by transaction_id descending
     # Filter for closed transactions with actual sales (exclude voided with sum=0)
     closed_txns = [t for t in transactions if str(t.get('status')) == '2' and int(t.get('sum', 0) or 0) > 0]
     closed_txns.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
@@ -1172,8 +1197,8 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No closed transactions found for today.")
         return
 
-    # Take last 2
-    recent = closed_txns[:2]
+    # Take requested count
+    recent = closed_txns[:count]
 
     if not subscribed_chats:
         await update.message.reply_text("No subscribed chats to send to.")
@@ -1198,12 +1223,30 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             payment = "💵 Cash"
 
+        # Fetch items sold in this transaction
+        items_str = ""
+        try:
+            products = fetch_transaction_products(txn_id)
+            if products:
+                items_list = []
+                for p in products:
+                    qty = float(p.get('num', 1))
+                    name = p.get('product_name', 'Unknown')
+                    if qty == 1:
+                        items_list.append(name)
+                    else:
+                        items_list.append(f"{qty:.0f}x {name}")
+                items_str = "\n<b>Items:</b> " + ", ".join(items_list)
+        except Exception as e:
+            logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
+
         message = (
             f"🔄 <b>Resend Test - Sale #{txn_id}</b>\n\n"
             f"<b>Amount:</b> {format_currency(total)}\n"
             f"<b>Profit:</b> {format_currency(profit)}\n"
             f"<b>Payment:</b> {payment}\n"
             f"<b>Table:</b> {table_name}"
+            f"{items_str}"
         )
 
         for chat_id in subscribed_chats.copy():
@@ -2301,12 +2344,30 @@ async def check_new_transactions():
                     else:
                         payment = "💵 Cash"
 
+                    # Fetch items sold in this transaction
+                    items_str = ""
+                    try:
+                        products = fetch_transaction_products(txn_id)
+                        if products:
+                            items_list = []
+                            for p in products:
+                                qty = float(p.get('num', 1))
+                                name = p.get('product_name', 'Unknown')
+                                if qty == 1:
+                                    items_list.append(name)
+                                else:
+                                    items_list.append(f"{qty:.0f}x {name}")
+                            items_str = "\n<b>Items:</b> " + ", ".join(items_list)
+                    except Exception as e:
+                        logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
+
                     message = (
                         f"💰 <b>New Sale!</b>\n\n"
                         f"<b>Amount:</b> {format_currency(total)}\n"
                         f"<b>Profit:</b> {format_currency(profit)}\n"
                         f"<b>Payment:</b> {payment}\n"
                         f"<b>Table:</b> {table_name}"
+                        f"{items_str}"
                     )
 
                     for chat_id in subscribed_chats.copy():
