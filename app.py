@@ -278,6 +278,22 @@ def format_currency(amount_in_cents):
         return "฿0.00"
 
 
+# Business day cutoff hour (2am) - "today" means yesterday until this hour
+BUSINESS_DAY_CUTOFF_HOUR = 2
+
+
+def get_business_date():
+    """Get the current business date.
+
+    For bars/restaurants that operate late, the business day doesn't end at midnight.
+    If current time is before BUSINESS_DAY_CUTOFF_HOUR (2am), return yesterday's date.
+    """
+    now = datetime.now()
+    if now.hour < BUSINESS_DAY_CUTOFF_HOUR:
+        return (now - timedelta(days=1)).date()
+    return now.date()
+
+
 def generate_sales_chart(transactions, date_from, date_to, title, finance_transactions=None):
     """Generate a bar chart showing daily gross profit, net profit, and expenses."""
     # Group transactions by date
@@ -1140,7 +1156,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @require_admin
 async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /debug command - show raw API transaction data."""
-    today_str = date.today().strftime('%Y%m%d')
+    today_str = get_business_date().strftime('%Y%m%d')
 
     await update.message.reply_text("⏳ Fetching raw transaction data...")
 
@@ -1180,8 +1196,8 @@ async def sales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError:
             pass
 
-    today_str = date.today().strftime('%Y%m%d')
-    today_display = date.today().strftime('%d %b %Y')
+    today_str = get_business_date().strftime('%Y%m%d')
+    today_display = get_business_date().strftime('%d %b %Y')
 
     await update.message.reply_text(f"⏳ Fetching last {count} sales...")
 
@@ -1270,7 +1286,7 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError:
             pass
 
-    today_str = date.today().strftime('%Y%m%d')
+    today_str = get_business_date().strftime('%Y%m%d')
 
     await update.message.reply_text(f"⏳ Fetching and resending last {count} transactions...")
 
@@ -1394,7 +1410,7 @@ async def products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Default to today, allow 'week' or 'month' as argument
     period = context.args[0].lower() if context.args else 'today'
 
-    today_date = date.today()
+    today_date = get_business_date()
 
     if period == 'week':
         monday = today_date - timedelta(days=today_date.weekday())
@@ -1461,7 +1477,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /stats command - show product sales statistics with comparisons."""
     period = context.args[0].lower() if context.args else 'today'
 
-    today_date = date.today()
+    today_date = get_business_date()
 
     # Calculate current and previous periods
     if period == 'week':
@@ -1645,7 +1661,7 @@ async def ingredients(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     """Handle /ingredients command - show most used ingredients."""
     period = context.args[0].lower() if context.args else 'week'
 
-    today_date = date.today()
+    today_date = get_business_date()
 
     if period == 'month':
         first_day = today_date.replace(day=1)
@@ -1717,8 +1733,8 @@ async def ingredients(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 @require_auth
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /today command - get today's summary."""
-    today_str = date.today().strftime('%Y%m%d')
-    today_display = date.today().strftime('%d %b %Y')
+    today_str = get_business_date().strftime('%Y%m%d')
+    today_display = get_business_date().strftime('%d %b %Y')
 
     await update.message.reply_text("⏳ Fetching today's data...")
 
@@ -1735,7 +1751,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @require_auth
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /week command - get this week's summary."""
-    today_date = date.today()
+    today_date = get_business_date()
     monday = today_date - timedelta(days=today_date.weekday())
 
     date_from = monday.strftime('%Y%m%d')
@@ -1781,7 +1797,7 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @require_auth
 async def month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /month command - get this month's summary."""
-    today_date = date.today()
+    today_date = get_business_date()
     first_of_month = today_date.replace(day=1)
 
     date_from = first_of_month.strftime('%Y%m%d')
@@ -1972,7 +1988,7 @@ async def expenses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /expenses command - get detailed expense breakdown."""
     # Default to today if no date specified
     if not context.args:
-        date_from = date.today()
+        date_from = get_business_date()
         date_to = date_from
         date_display = date_from.strftime('%d %b %Y')
     elif len(context.args) == 1:
@@ -2180,7 +2196,7 @@ async def check_theft_indicators():
     if not theft_alert_chats:
         return
 
-    today_str = date.today().strftime('%Y%m%d')
+    today_str = get_business_date().strftime('%Y%m%d')
 
     try:
         # Check for voided transactions
@@ -2366,7 +2382,7 @@ async def check_new_transactions():
 
     try:
         # Fetch today's transactions
-        today_str = date.today().strftime('%Y%m%d')
+        today_str = get_business_date().strftime('%Y%m%d')
         transactions = fetch_transactions(today_str)
 
         if not transactions:
@@ -2498,8 +2514,8 @@ async def send_daily_summary():
         logger.warning("TELEGRAM_CHAT_ID or BOT_TOKEN not set, skipping scheduled summary")
         return
 
-    today_str = date.today().strftime('%Y%m%d')
-    today_display = date.today().strftime('%d %b %Y')
+    today_str = get_business_date().strftime('%Y%m%d')
+    today_display = get_business_date().strftime('%d %b %Y')
 
     transactions = fetch_transactions(today_str)
     summary_data = calculate_summary(transactions)
