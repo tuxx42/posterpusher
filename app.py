@@ -466,6 +466,40 @@ def fetch_product_sales(date_from, date_to=None):
         return []
 
 
+def fetch_stock_levels():
+    """Fetch current stock/inventory levels from Poster API."""
+    url = f"{POSTER_API_URL}/storage.getStorageLeftovers"
+    params = {"token": POSTER_ACCESS_TOKEN}
+
+    try:
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", [])
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch stock levels: {e}")
+        return []
+
+
+def fetch_ingredient_usage(date_from, date_to=None):
+    """Fetch ingredient usage/movement from Poster API."""
+    url = f"{POSTER_API_URL}/storage.getReportMovement"
+    params = {
+        "token": POSTER_ACCESS_TOKEN,
+        "date_from": date_from,
+        "date_to": date_to or date_from
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", [])
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch ingredient usage: {e}")
+        return []
+
+
 def calculate_summary(transactions):
     """Calculate summary statistics from transactions."""
     total_sales = 0
@@ -560,6 +594,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/products [today|week|month] - Product sales\n"
         "/stats [today|week|month] - Sales statistics\n"
         "/expenses [DATE] [DATE] - Expense breakdown\n\n"
+        "<b>📦 Inventory:</b>\n"
+        "/stock - Current stock levels\n"
+        "/ingredients [today|week|month] - Ingredient usage\n\n"
         "<b>💵 Cash:</b>\n"
         "/cash - Cash register balance\n\n"
         "<b>🔔 Real-time:</b>\n"
@@ -1402,6 +1439,143 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             message += f"  {margin:.0f}% {name}\n"
 
     message += f"\n<i>Usage: /stats [today|week|month]</i>"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+@require_auth
+async def stock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stock command - show current inventory levels."""
+    await update.message.reply_text("⏳ Fetching stock levels...")
+
+    stock_data = fetch_stock_levels()
+
+    if not stock_data:
+        await update.message.reply_text("No stock data available.")
+        return
+
+    # Separate into low/negative stock and normal stock
+    low_stock = []
+    negative_stock = []
+    normal_stock = []
+
+    for item in stock_data:
+        name = item.get('ingredient_name', 'Unknown')
+        left = float(item.get('ingredient_left', 0))
+        unit = item.get('ingredient_unit', '')
+        limit = float(item.get('limit_value', 0))
+        hidden = item.get('hidden', '0') == '1'
+
+        if hidden:
+            continue
+
+        if left < 0:
+            negative_stock.append((name, left, unit))
+        elif limit > 0 and left <= limit:
+            low_stock.append((name, left, unit, limit))
+        elif left > 0:
+            normal_stock.append((name, left, unit))
+
+    message = "📦 <b>Stock Levels</b>\n\n"
+
+    # Show negative stock (critical)
+    if negative_stock:
+        message += "🔴 <b>NEGATIVE STOCK (needs restock!):</b>\n"
+        for name, left, unit in sorted(negative_stock, key=lambda x: x[1])[:10]:
+            message += f"  ⚠️ {name}: {left:.2f} {unit}\n"
+        message += "\n"
+
+    # Show low stock (warning)
+    if low_stock:
+        message += "🟡 <b>LOW STOCK (below limit):</b>\n"
+        for name, left, unit, limit in sorted(low_stock, key=lambda x: x[1])[:10]:
+            message += f"  ⚠️ {name}: {left:.2f}/{limit:.0f} {unit}\n"
+        message += "\n"
+
+    if not negative_stock and not low_stock:
+        message += "✅ All items are well stocked!\n\n"
+
+    # Summary stats
+    total_items = len([s for s in stock_data if s.get('hidden', '0') != '1'])
+    items_with_stock = len([s for s in stock_data if float(s.get('ingredient_left', 0)) > 0 and s.get('hidden', '0') != '1'])
+    message += f"<b>Summary:</b> {items_with_stock}/{total_items} items in stock"
+
+    if len(negative_stock) > 0:
+        message += f"\n⚠️ {len(negative_stock)} items need immediate restock!"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+@require_auth
+async def ingredients(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /ingredients command - show most used ingredients."""
+    period = context.args[0].lower() if context.args else 'week'
+
+    today_date = date.today()
+
+    if period == 'month':
+        first_day = today_date.replace(day=1)
+        date_from = first_day.strftime('%Y%m%d')
+        date_to = today_date.strftime('%Y%m%d')
+        period_display = today_date.strftime('%B')
+    elif period == 'today':
+        date_from = today_date.strftime('%Y%m%d')
+        date_to = date_from
+        period_display = "Today"
+    else:  # week
+        monday = today_date - timedelta(days=today_date.weekday())
+        date_from = monday.strftime('%Y%m%d')
+        date_to = today_date.strftime('%Y%m%d')
+        period_display = "This Week"
+
+    await update.message.reply_text(f"⏳ Fetching ingredient usage for {period_display}...")
+
+    usage_data = fetch_ingredient_usage(date_from, date_to)
+
+    if not usage_data:
+        await update.message.reply_text("No ingredient usage data available.")
+        return
+
+    # Filter to items with actual usage (write_offs > 0)
+    used_items = [
+        item for item in usage_data
+        if float(item.get('write_offs', 0)) > 0
+    ]
+
+    if not used_items:
+        await update.message.reply_text(f"No ingredients used during {period_display}.")
+        return
+
+    # Sort by usage (write_offs) descending
+    used_items.sort(key=lambda x: float(x.get('write_offs', 0)), reverse=True)
+
+    message = f"🧪 <b>Ingredient Usage - {period_display}</b>\n\n"
+    message += f"<b>Total ingredients used:</b> {len(used_items)}\n\n"
+    message += "<b>Top Used Ingredients:</b>\n"
+    message += "─" * 25 + "\n"
+
+    for item in used_items[:20]:
+        name = item.get('ingredient_name', 'Unknown')
+        usage = float(item.get('write_offs', 0))
+        # Try to determine unit from the data or default
+        # The API returns units based on ingredient type
+
+        # Truncate long names
+        if len(name) > 20:
+            name = name[:17] + "..."
+
+        # Format usage nicely
+        if usage >= 1:
+            usage_str = f"{usage:.1f}"
+        else:
+            usage_str = f"{usage:.3f}"
+
+        message += f"  <code>{usage_str:>8}</code> {name}\n"
+
+    if len(used_items) > 20:
+        message += f"\n<i>... and {len(used_items) - 20} more ingredients</i>"
+
+    message += f"\n\n<i>Usage: /ingredients [today|week|month]</i>"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
@@ -2272,6 +2446,8 @@ async def cli_mode():
         '/config': config,
         '/products': products,
         '/stats': stats,
+        '/stock': stock,
+        '/ingredients': ingredients,
         '/today': today,
         '/week': week,
         '/month': month,
@@ -2382,6 +2558,8 @@ def main():
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("products", products))
     application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("stock", stock))
+    application.add_handler(CommandHandler("ingredients", ingredients))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
     application.add_handler(CommandHandler("summary", summary))
