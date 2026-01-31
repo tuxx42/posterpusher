@@ -609,6 +609,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/week - This week's summary\n"
         "/month - This month's summary\n"
         "/summary DATE [DATE] - Custom date/range\n"
+        "/sales [N] - Last N sales with items\n"
         "/products [today|week|month] - Product sales\n"
         "/stats [today|week|month] - Sales statistics\n"
         "/expenses [DATE] [DATE] - Expense breakdown\n\n"
@@ -1164,6 +1165,96 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Also show last_seen_transaction_id
     message += f"<b>last_seen_transaction_id:</b> {last_seen_transaction_id}\n"
     message += f"<b>Type:</b> {type(last_seen_transaction_id).__name__}"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+@require_auth
+async def sales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /sales command - show N most recent sales."""
+    # Default to 5, allow override with argument
+    count = 5
+    if context.args:
+        try:
+            count = min(int(context.args[0]), 20)  # Max 20
+        except ValueError:
+            pass
+
+    today_str = date.today().strftime('%Y%m%d')
+    today_display = date.today().strftime('%d %b %Y')
+
+    await update.message.reply_text(f"⏳ Fetching last {count} sales...")
+
+    transactions = fetch_transactions(today_str)
+
+    if not transactions:
+        await update.message.reply_text("No transactions found for today.")
+        return
+
+    # Filter for closed transactions with actual sales
+    valid_sales = [
+        t for t in transactions
+        if str(t.get('status')) == '2' and int(t.get('sum', 0) or 0) > 0
+    ]
+
+    if not valid_sales:
+        await update.message.reply_text("No completed sales found for today.")
+        return
+
+    # Sort by transaction_id descending (most recent first)
+    valid_sales.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
+
+    # Take requested count
+    recent_sales = valid_sales[:count]
+
+    message = f"🧾 <b>Last {len(recent_sales)} Sales - {today_display}</b>\n\n"
+
+    for txn in recent_sales:
+        txn_id = txn.get('transaction_id')
+        total = int(txn.get('sum', 0) or 0)
+        profit = int(txn.get('total_profit', 0) or 0)
+        payed_cash = int(txn.get('payed_cash', 0) or 0)
+        payed_card = int(txn.get('payed_card', 0) or 0)
+        table_name = txn.get('table_name', '-')
+        close_time = txn.get('date_close_date', '')
+
+        # Format time
+        time_str = close_time.split(' ')[1][:5] if ' ' in close_time else '-'
+
+        # Payment icon
+        if payed_card > 0 and payed_cash > 0:
+            pay_icon = "💳💵"
+        elif payed_card > 0:
+            pay_icon = "💳"
+        else:
+            pay_icon = "💵"
+
+        # Fetch items
+        items_str = ""
+        try:
+            products = fetch_transaction_products(txn_id)
+            if products:
+                items_list = []
+                for p in products[:5]:  # Limit to 5 items per sale
+                    qty = float(p.get('num', 1))
+                    name = p.get('product_name', 'Unknown')
+                    if len(name) > 15:
+                        name = name[:12] + "..."
+                    if qty == 1:
+                        items_list.append(name)
+                    else:
+                        items_list.append(f"{qty:.0f}x {name}")
+                items_str = ", ".join(items_list)
+                if len(products) > 5:
+                    items_str += f" +{len(products)-5} more"
+        except Exception as e:
+            logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
+
+        message += f"<code>{time_str}</code> {pay_icon} {format_currency(total)} 📍{table_name}\n"
+        if items_str:
+            message += f"   <i>{items_str}</i>\n"
+
+    message += f"\n<i>Usage: /sales [count]</i>"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
@@ -2507,6 +2598,7 @@ async def cli_mode():
         '/config': config,
         '/products': products,
         '/stats': stats,
+        '/sales': sales,
         '/stock': stock,
         '/ingredients': ingredients,
         '/today': today,
@@ -2619,6 +2711,7 @@ def main():
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("products", products))
     application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("sales", sales))
     application.add_handler(CommandHandler("stock", stock))
     application.add_handler(CommandHandler("ingredients", ingredients))
     application.add_handler(CommandHandler("week", week))
