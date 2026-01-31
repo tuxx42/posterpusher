@@ -558,6 +558,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/month - This month's summary\n"
         "/summary DATE [DATE] - Custom date/range\n"
         "/products [today|week|month] - Product sales\n"
+        "/stats [today|week|month] - Sales statistics\n"
         "/expenses [DATE] [DATE] - Expense breakdown\n\n"
         "<b>💵 Cash:</b>\n"
         "/cash - Cash register balance\n\n"
@@ -1280,6 +1281,127 @@ async def products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message += f"\n<i>... and {len(product_sales) - 15} more products</i>"
 
     message += f"\n\n<i>Usage: /products [today|week|month]</i>"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+@require_auth
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stats command - show product sales statistics with comparisons."""
+    period = context.args[0].lower() if context.args else 'today'
+
+    today_date = date.today()
+
+    # Calculate current and previous periods
+    if period == 'week':
+        monday = today_date - timedelta(days=today_date.weekday())
+        current_from = monday.strftime('%Y%m%d')
+        current_to = today_date.strftime('%Y%m%d')
+        prev_monday = monday - timedelta(days=7)
+        prev_sunday = monday - timedelta(days=1)
+        prev_from = prev_monday.strftime('%Y%m%d')
+        prev_to = prev_sunday.strftime('%Y%m%d')
+        period_display = "This Week"
+        prev_display = "Last Week"
+        days_in_period = (today_date - monday).days + 1
+    elif period == 'month':
+        first_day = today_date.replace(day=1)
+        current_from = first_day.strftime('%Y%m%d')
+        current_to = today_date.strftime('%Y%m%d')
+        last_month_end = first_day - timedelta(days=1)
+        last_month_start = last_month_end.replace(day=1)
+        prev_from = last_month_start.strftime('%Y%m%d')
+        prev_to = last_month_end.strftime('%Y%m%d')
+        period_display = today_date.strftime('%B')
+        prev_display = last_month_end.strftime('%B')
+        days_in_period = today_date.day
+    else:
+        current_from = today_date.strftime('%Y%m%d')
+        current_to = current_from
+        yesterday = today_date - timedelta(days=1)
+        prev_from = yesterday.strftime('%Y%m%d')
+        prev_to = prev_from
+        period_display = "Today"
+        prev_display = "Yesterday"
+        days_in_period = 1
+
+    await update.message.reply_text(f"⏳ Calculating statistics for {period_display}...")
+
+    # Fetch current and previous period data
+    current_sales = fetch_product_sales(current_from, current_to)
+    prev_sales = fetch_product_sales(prev_from, prev_to)
+
+    if not current_sales:
+        await update.message.reply_text("No product sales found for this period.")
+        return
+
+    # Calculate totals
+    total_items = sum(float(p.get('count', 0)) for p in current_sales)
+    total_revenue = sum(int(p.get('payed_sum', 0) or 0) for p in current_sales)
+    total_profit = sum(int(p.get('product_profit', 0) or 0) for p in current_sales)
+
+    prev_items = sum(float(p.get('count', 0)) for p in prev_sales) if prev_sales else 0
+    prev_revenue = sum(int(p.get('payed_sum', 0) or 0) for p in prev_sales) if prev_sales else 0
+
+    # Calculate changes
+    def calc_change(current, previous):
+        if previous == 0:
+            return "+∞%" if current > 0 else "0%"
+        change = ((current - previous) / previous) * 100
+        return f"+{change:.0f}%" if change >= 0 else f"{change:.0f}%"
+
+    items_change = calc_change(total_items, prev_items)
+    revenue_change = calc_change(total_revenue, prev_revenue)
+
+    # Sort for different rankings
+    by_quantity = sorted(current_sales, key=lambda x: float(x.get('count', 0)), reverse=True)
+    by_revenue = sorted(current_sales, key=lambda x: int(x.get('payed_sum', 0) or 0), reverse=True)
+    by_profit = sorted(current_sales, key=lambda x: int(x.get('product_profit', 0) or 0), reverse=True)
+
+    # Calculate profit margins and sort
+    for p in current_sales:
+        revenue = int(p.get('payed_sum', 0) or 0)
+        profit = int(p.get('product_profit', 0) or 0)
+        p['margin'] = (profit / revenue * 100) if revenue > 0 else 0
+    by_margin = sorted(current_sales, key=lambda x: x.get('margin', 0), reverse=True)
+
+    message = f"📈 <b>Product Statistics - {period_display}</b>\n\n"
+
+    # Summary with comparison
+    message += f"<b>📊 Summary vs {prev_display}:</b>\n"
+    message += f"Items: {total_items:.0f} ({items_change})\n"
+    message += f"Revenue: {format_currency(total_revenue)} ({revenue_change})\n"
+    message += f"Profit: {format_currency(total_profit)}\n"
+    if days_in_period > 1:
+        message += f"Avg/day: {format_currency(total_revenue // days_in_period)}\n"
+    message += "\n"
+
+    # Top 5 by quantity
+    message += "<b>🏆 Top Sellers (qty):</b>\n"
+    for p in by_quantity[:5]:
+        name = p.get('product_name', 'Unknown')[:15]
+        count = float(p.get('count', 0))
+        message += f"  {count:.0f}x {name}\n"
+    message += "\n"
+
+    # Top 5 by revenue
+    message += "<b>💰 Top Revenue:</b>\n"
+    for p in by_revenue[:5]:
+        name = p.get('product_name', 'Unknown')[:15]
+        revenue = int(p.get('payed_sum', 0) or 0)
+        message += f"  {format_currency(revenue)} {name}\n"
+    message += "\n"
+
+    # Top 5 by profit margin (only products with significant sales)
+    significant = [p for p in by_margin if float(p.get('count', 0)) >= 2]
+    if significant:
+        message += "<b>📊 Best Margins:</b>\n"
+        for p in significant[:5]:
+            name = p.get('product_name', 'Unknown')[:15]
+            margin = p.get('margin', 0)
+            message += f"  {margin:.0f}% {name}\n"
+
+    message += f"\n<i>Usage: /stats [today|week|month]</i>"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
@@ -2149,6 +2271,7 @@ async def cli_mode():
         '/loglevel': loglevel,
         '/config': config,
         '/products': products,
+        '/stats': stats,
         '/today': today,
         '/week': week,
         '/month': month,
@@ -2258,6 +2381,7 @@ def main():
     application.add_handler(CommandHandler("loglevel", loglevel))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("products", products))
+    application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
     application.add_handler(CommandHandler("summary", summary))
