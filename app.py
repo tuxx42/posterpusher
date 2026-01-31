@@ -552,18 +552,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # User has access - show full menu
     message = (
         "🍺 <b>Ban Sabai POS Bot</b>\n\n"
-        "<b>Reports:</b>\n"
+        "<b>📊 Reports:</b>\n"
         "/today - Today's sales summary\n"
         "/week - This week's summary\n"
         "/month - This month's summary\n"
         "/summary DATE [DATE] - Custom date/range\n"
+        "/products [today|week|month] - Product sales\n"
         "/expenses [DATE] [DATE] - Expense breakdown\n\n"
-        "<b>Cash:</b>\n"
+        "<b>💵 Cash:</b>\n"
         "/cash - Cash register balance\n\n"
-        "<b>Real-time:</b>\n"
+        "<b>🔔 Real-time:</b>\n"
         "/subscribe - Get notified on each sale\n"
         "/unsubscribe - Stop sale notifications\n\n"
-        "<b>Security:</b>\n"
+        "<b>🚨 Security:</b>\n"
         "/alerts - Enable theft detection\n"
         "/alerts_off - Disable theft alerts\n\n"
     )
@@ -571,7 +572,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Add admin commands if user is admin
     if is_admin:
         message += (
-            "<b>Admin:</b>\n"
+            "<b>👑 Admin:</b>\n"
             "/approve - Approve user access\n"
             "/reject ID - Reject user request\n"
             "/users - List approved users\n"
@@ -579,6 +580,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/demote ID - Remove admin privileges\n"
             "/config - View bot configuration\n"
             "/reset - Reset all configuration\n\n"
+            "<b>🔧 Debug:</b>\n"
+            "/debug - Show raw transaction data\n"
+            "/resend - Resend last 2 notifications\n"
+            "/loglevel [LEVEL] - Set logging level\n\n"
         )
 
     message += "/help - Show this message"
