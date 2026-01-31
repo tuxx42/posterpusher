@@ -447,6 +447,25 @@ def fetch_transactions(date_from, date_to=None):
         return []
 
 
+def fetch_product_sales(date_from, date_to=None):
+    """Fetch product-level sales data from Poster API."""
+    url = f"{POSTER_API_URL}/dash.getProductsSales"
+    params = {
+        "token": POSTER_ACCESS_TOKEN,
+        "date_from": date_from,
+        "date_to": date_to or date_from
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", [])
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch product sales: {e}")
+        return []
+
+
 def calculate_summary(transactions):
     """Calculate summary statistics from transactions."""
     total_sales = 0
@@ -1190,6 +1209,74 @@ async def loglevel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode=ParseMode.HTML
     )
     logger.info(f"Log level changed to {level_name} by chat_id={update.effective_chat.id}")
+
+
+@require_auth
+async def products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /products command - show products sold with quantities."""
+    # Default to today, allow 'week' or 'month' as argument
+    period = context.args[0].lower() if context.args else 'today'
+
+    today_date = date.today()
+
+    if period == 'week':
+        monday = today_date - timedelta(days=today_date.weekday())
+        date_from = monday.strftime('%Y%m%d')
+        date_to = today_date.strftime('%Y%m%d')
+        period_display = f"This Week ({monday.strftime('%d %b')} - {today_date.strftime('%d %b')})"
+    elif period == 'month':
+        first_day = today_date.replace(day=1)
+        date_from = first_day.strftime('%Y%m%d')
+        date_to = today_date.strftime('%Y%m%d')
+        period_display = today_date.strftime('%B %Y')
+    else:
+        date_from = today_date.strftime('%Y%m%d')
+        date_to = date_from
+        period_display = today_date.strftime('%d %b %Y')
+
+    await update.message.reply_text(f"⏳ Fetching product sales for {period_display}...")
+
+    product_sales = fetch_product_sales(date_from, date_to)
+
+    if not product_sales:
+        await update.message.reply_text("No product sales found for this period.")
+        return
+
+    # Sort by quantity sold (descending)
+    product_sales.sort(key=lambda x: float(x.get('count', 0)), reverse=True)
+
+    # Calculate totals
+    total_items = sum(float(p.get('count', 0)) for p in product_sales)
+    total_revenue = sum(int(p.get('payed_sum', 0) or 0) for p in product_sales)
+    total_profit = sum(int(p.get('product_profit', 0) or 0) for p in product_sales)
+
+    message = f"🛒 <b>Products Sold - {period_display}</b>\n\n"
+    message += f"<b>Total Items:</b> {total_items:.0f}\n"
+    message += f"<b>Revenue:</b> {format_currency(total_revenue)}\n"
+    message += f"<b>Profit:</b> {format_currency(total_profit)}\n"
+    message += "\n<b>Top Products:</b>\n"
+    message += "─" * 25 + "\n"
+
+    # Show top 15 products
+    for p in product_sales[:15]:
+        name = p.get('product_name', 'Unknown')
+        count = float(p.get('count', 0))
+        revenue = int(p.get('payed_sum', 0) or 0)
+        profit = int(p.get('product_profit', 0) or 0)
+
+        # Truncate long names
+        if len(name) > 18:
+            name = name[:15] + "..."
+
+        message += f"<code>{count:>4.0f}x</code> {name}\n"
+        message += f"      {format_currency(revenue)} (P: {format_currency(profit)})\n"
+
+    if len(product_sales) > 15:
+        message += f"\n<i>... and {len(product_sales) - 15} more products</i>"
+
+    message += f"\n\n<i>Usage: /products [today|week|month]</i>"
+
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
 @require_auth
@@ -2056,6 +2143,7 @@ async def cli_mode():
         '/resend': resend,
         '/loglevel': loglevel,
         '/config': config,
+        '/products': products,
         '/today': today,
         '/week': week,
         '/month': month,
@@ -2164,6 +2252,7 @@ def main():
     application.add_handler(CommandHandler("resend", resend))
     application.add_handler(CommandHandler("loglevel", loglevel))
     application.add_handler(CommandHandler("today", today))
+    application.add_handler(CommandHandler("products", products))
     application.add_handler(CommandHandler("week", week))
     application.add_handler(CommandHandler("month", month))
     application.add_handler(CommandHandler("summary", summary))
