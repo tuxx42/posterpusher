@@ -15,6 +15,9 @@ CONFIG_FILE = os.environ.get('CONFIG_FILE', 'bot_config.json')
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 POSTER_ACCESS_TOKEN = os.environ.get('POSTER_ACCESS_TOKEN')
 
+# Logging configuration
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+
 # Subscription state
 subscribed_chats = set()
 theft_alert_chats = set()
@@ -143,6 +146,42 @@ def get_agent_usage(user_id: str) -> tuple[int, int]:
     return agent_usage[user_id]['count'], daily_limit
 
 
+def set_log_level(level: str) -> bool:
+    """Set the log level and persist to config.
+
+    Args:
+        level: Log level name (DEBUG, INFO, WARNING, ERROR)
+
+    Returns:
+        True if successful, False if invalid level
+    """
+    global LOG_LEVEL
+
+    valid_levels = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+    level = level.upper()
+
+    if level not in valid_levels:
+        return False
+
+    LOG_LEVEL = level
+
+    # Persist to config file
+    config_data = {}
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config_data = json.load(f)
+        except Exception:
+            pass
+
+    config_data['LOG_LEVEL'] = level
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config_data, f, indent=2)
+
+    logger.info(f"Log level set to {level}")
+    return True
+
+
 def mask_api_key(key: str) -> str:
     """Mask an API key for display, showing only first 4 and last 4 characters."""
     if not key or len(key) < 12:
@@ -153,7 +192,7 @@ def mask_api_key(key: str) -> str:
 def load_config():
     """Load persisted state from config file."""
     global last_seen_transaction_id, last_seen_void_id, last_cash_balance
-    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN
+    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN, LOG_LEVEL
 
     try:
         if os.path.exists(CONFIG_FILE):
@@ -199,6 +238,10 @@ def load_config():
                 if cfg.get('POSTER_ACCESS_TOKEN'):
                     POSTER_ACCESS_TOKEN = cfg.get('POSTER_ACCESS_TOKEN')
 
+                # Load log level (config file overrides env var)
+                if cfg.get('LOG_LEVEL'):
+                    LOG_LEVEL = cfg.get('LOG_LEVEL').upper()
+
                 logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, {len(admin_chat_ids)} admins")
                 logger.info(f"Loaded theft state: {len(alerted_transactions)} alerted txns, {len(alerted_expenses)} alerted expenses")
     except Exception as e:
@@ -230,11 +273,13 @@ def save_config():
             'alerted_transactions': list(alerted_transactions),
             'alerted_expenses': list(alerted_expenses)
         }
-        # Preserve API keys from existing config
+        # Preserve API keys and log level from existing config
         if existing_config.get('ANTHROPIC_API_KEY'):
             config['ANTHROPIC_API_KEY'] = existing_config['ANTHROPIC_API_KEY']
         if existing_config.get('POSTER_ACCESS_TOKEN'):
             config['POSTER_ACCESS_TOKEN'] = existing_config['POSTER_ACCESS_TOKEN']
+        if existing_config.get('LOG_LEVEL'):
+            config['LOG_LEVEL'] = existing_config['LOG_LEVEL']
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
         logger.info("Config saved")

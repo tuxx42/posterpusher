@@ -73,7 +73,8 @@ from config import (
     approved_users, pending_requests, alerted_transactions, alerted_expenses,
     check_agent_rate_limit, record_agent_usage, get_agent_usage,
     get_agent_limits, set_agent_limit,
-    agent_conversations, AGENT_HISTORY_LIMIT
+    agent_conversations, AGENT_HISTORY_LIMIT,
+    set_log_level
 )
 
 # Import agent module (optional dependency)
@@ -1478,12 +1479,21 @@ async def loglevel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
+    # Set and persist log level
+    if not set_log_level(level_name):
+        await update.message.reply_text(
+            f"❌ Failed to set log level: {level_name}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Apply to loggers
     level = getattr(logging, level_name)
     logger.setLevel(level)
     logging.getLogger().setLevel(level)  # Also set root logger
 
     await update.message.reply_text(
-        f"✅ Log level set to <b>{level_name}</b>",
+        f"✅ Log level set to <b>{level_name}</b> (saved)",
         parse_mode=ParseMode.HTML
     )
     logger.info(f"Log level changed to {level_name} by chat_id={update.effective_chat.id}")
@@ -2722,6 +2732,11 @@ async def cli_mode():
     # Load config
     load_config()
 
+    # Apply configured log level
+    log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
+    logger.setLevel(log_level)
+    logging.getLogger().setLevel(log_level)
+
     # Make CLI user an admin for testing
     global admin_chat_ids, approved_users, subscribed_chats
     cli_chat_id = "cli_test_user"
@@ -2803,6 +2818,11 @@ def main():
 
     # Load persisted state (may contain POSTER_ACCESS_TOKEN)
     load_config()
+
+    # Apply configured log level
+    log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
+    logger.setLevel(log_level)
+    logging.getLogger().setLevel(log_level)
 
     if not config.POSTER_ACCESS_TOKEN:
         logger.error("POSTER_ACCESS_TOKEN not set (set via env var or /config set)")
