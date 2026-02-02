@@ -13,6 +13,11 @@ You cannot modify any data - only retrieve and analyze it.
 
 Today's date is: {today}
 
+IMPORTANT: You have a maximum of {max_iterations} tool calls per request. Plan accordingly:
+- Prioritize the most important data first
+- Combine related queries if possible
+- If a request requires more data than you can fetch, answer with what you have and note what's missing
+
 When the user asks questions about the business, use the available tools to fetch the relevant data and provide a helpful summary.
 
 Guidelines:
@@ -248,13 +253,14 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
 
     client = anthropic.Anthropic(api_key=anthropic_api_key)
 
-    # Build system prompt with current date
+    # Build system prompt with current date and iteration limit
     today = date.today()
     yesterday = today - timedelta(days=1)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         today=today.strftime('%B %d, %Y'),
         today_yyyymmdd=today.strftime('%Y%m%d'),
-        yesterday_yyyymmdd=yesterday.strftime('%Y%m%d')
+        yesterday_yyyymmdd=yesterday.strftime('%Y%m%d'),
+        max_iterations=max_iterations
     )
 
     # Start with history (if provided) + new user message
