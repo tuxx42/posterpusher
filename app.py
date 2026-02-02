@@ -2372,15 +2372,14 @@ async def check_theft_indicators():
 
         # Check for suspicious transactions
         transactions = fetch_transactions(today_str)
-        max_txn_id = last_alerted_transaction_id
+        # Sort by transaction ID ascending to process in order
+        transactions.sort(key=lambda x: int(x.get('transaction_id', 0) or 0))
         for txn in transactions:
             txn_id = int(txn.get('transaction_id', 0) or 0)
 
             # Skip if we've already checked this transaction
             if txn_id <= last_alerted_transaction_id:
                 continue
-
-            max_txn_id = max(max_txn_id, txn_id)
 
             total = int(txn.get('sum', 0) or 0)
             payed_sum = int(txn.get('payed_sum', 0) or 0)
@@ -2436,7 +2435,8 @@ async def check_theft_indicators():
                     )
                     await send_theft_alert("discount", alert_msg)
 
-        last_alerted_transaction_id = max_txn_id
+            # Update after processing each transaction (sorted ascending)
+            last_alerted_transaction_id = txn_id
 
         # Check cash register discrepancies
         shifts = fetch_cash_shifts()
@@ -2478,14 +2478,14 @@ async def check_theft_indicators():
         # Check for large expenses
         finance_txns = fetch_finance_transactions(today_str)
         expenses_data = calculate_expenses(finance_txns)
+        expense_list = expenses_data['expense_list']
+        # Sort by transaction ID ascending to process in order
+        expense_list.sort(key=lambda x: int(x.get('transaction_id', 0) or 0))
 
-        max_expense_id = last_alerted_expense_id
-        for expense in expenses_data['expense_list']:
+        for expense in expense_list:
             expense_id = int(expense.get('transaction_id', 0) or 0)
             if expense_id <= last_alerted_expense_id:
                 continue
-
-            max_expense_id = max(max_expense_id, expense_id)
 
             if expense['amount'] >= LARGE_EXPENSE_THRESHOLD:
                 comment = expense['comment'] or 'No description'
@@ -2501,7 +2501,8 @@ async def check_theft_indicators():
                 )
                 await send_theft_alert("large_expense", alert_msg)
 
-        last_alerted_expense_id = max_expense_id
+            # Update after processing each expense (sorted ascending)
+            last_alerted_expense_id = expense_id
 
         # Save state after checking to persist alerted items
         save_config()
@@ -2529,118 +2530,107 @@ async def check_new_transactions():
             logger.debug("No transactions found for today")
             return
 
-        # Sort by transaction_id to get the latest
-        transactions.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
-        latest_txn = transactions[0]
-        latest_id = latest_txn.get('transaction_id')
-
-        # Convert to int for consistent comparison (API may return string or int)
-        try:
-            latest_id_int = int(latest_id) if latest_id else 0
-        except (ValueError, TypeError):
-            logger.error(f"Invalid latest transaction ID: {latest_id}")
-            return
-
-        # First run - just set the last seen ID
-        if last_seen_transaction_id is None:
-            last_seen_transaction_id = latest_id_int
-            save_config()
-            logger.info(f"Initialized last_seen_transaction_id to {latest_id_int}")
-            return
+        # Sort by transaction_id ascending to process in order
+        transactions.sort(key=lambda x: int(x.get('transaction_id', 0) or 0))
 
         # Convert last seen to int for comparison
         try:
             last_seen_int = int(last_seen_transaction_id) if last_seen_transaction_id else 0
         except (ValueError, TypeError):
-            logger.error(f"Invalid last_seen_transaction_id: {last_seen_transaction_id}, resetting")
-            last_seen_transaction_id = latest_id_int
+            logger.error(f"Invalid last_seen_transaction_id: {last_seen_transaction_id}, resetting to 0")
+            last_seen_int = 0
+
+        # First run - initialize to highest ID without sending notifications
+        if last_seen_transaction_id is None and transactions:
+            latest_id = int(transactions[-1].get('transaction_id', 0) or 0)
+            last_seen_transaction_id = latest_id
             save_config()
+            logger.info(f"Initialized last_seen_transaction_id to {latest_id}")
             return
 
-        # Check if there are newer transactions (using numeric comparison)
-        if latest_id_int > last_seen_int:
-            # Find all new closed transactions with actual sales (status 2 = closed, sum > 0 = not voided)
-            new_transactions = [
-                t for t in transactions
-                if int(t.get('transaction_id', 0)) > last_seen_int
-                and str(t.get('status')) == '2'  # Only closed transactions
-                and int(t.get('sum', 0) or 0) > 0  # Exclude voided/cancelled (sum=0)
-            ]
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        notifications_sent = 0
+        new_count = 0
 
-            logger.info(f"Found {len(new_transactions)} new closed transactions (latest: {latest_id_int}, last seen: {last_seen_int})")
+        for txn in transactions:
+            txn_id = int(txn.get('transaction_id', 0) or 0)
 
-            if new_transactions:
-                bot = Bot(token=TELEGRAM_BOT_TOKEN)
-                notifications_sent = 0
+            # Skip already-seen transactions
+            if txn_id <= last_seen_int:
+                continue
 
-                for txn in reversed(new_transactions):  # Send oldest first
-                    txn_id = txn.get('transaction_id')
-                    # Debug: log raw transaction data
-                    logger.debug(f"Raw transaction data for {txn_id}: {txn}")
-                    total = int(txn.get('sum', 0) or 0)
-                    profit = int(txn.get('total_profit', 0) or 0)
-                    logger.debug(f"Parsed values - total: {total}, profit: {profit}")
-                    payed_cash = int(txn.get('payed_cash', 0) or 0)
-                    payed_card = int(txn.get('payed_card', 0) or 0)
-                    table_name = txn.get('table_name', '')
+            # Only notify for closed transactions with actual sales
+            status = str(txn.get('status', ''))
+            total = int(txn.get('sum', 0) or 0)
 
-                    if payed_card > 0 and payed_cash > 0:
-                        payment = "💳+💵"
-                    elif payed_card > 0:
-                        payment = "💳 Card"
-                    else:
-                        payment = "💵 Cash"
+            if status == '2' and total > 0:
+                new_count += 1
+                # Debug: log raw transaction data
+                logger.debug(f"Raw transaction data for {txn_id}: {txn}")
+                profit = int(txn.get('total_profit', 0) or 0)
+                logger.debug(f"Parsed values - total: {total}, profit: {profit}")
+                payed_cash = int(txn.get('payed_cash', 0) or 0)
+                payed_card = int(txn.get('payed_card', 0) or 0)
+                table_name = txn.get('table_name', '')
 
-                    # Fetch items sold in this transaction
-                    items_str = ""
-                    try:
-                        products = fetch_transaction_products(txn_id)
-                        if products:
-                            items_list = []
-                            for p in products:
-                                qty = float(p.get('num', 1))
-                                name = p.get('product_name', 'Unknown')
-                                if qty == 1:
-                                    items_list.append(name)
-                                else:
-                                    items_list.append(f"{qty:.0f}x {name}")
-                            items_str = "\n<b>Items:</b> " + ", ".join(items_list)
-                    except Exception as e:
-                        logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
+                if payed_card > 0 and payed_cash > 0:
+                    payment = "💳+💵"
+                elif payed_card > 0:
+                    payment = "💳 Card"
+                else:
+                    payment = "💵 Cash"
 
-                    message = (
-                        f"💰 <b>New Sale!</b>\n\n"
-                        f"<b>Amount:</b> {format_currency(total)}\n"
-                        f"<b>Profit:</b> {format_currency(profit)}\n"
-                        f"<b>Payment:</b> {payment}\n"
-                        f"<b>Table:</b> {table_name}"
-                        f"{items_str}"
-                    )
-
-                    for chat_id in subscribed_chats.copy():
-                        try:
-                            result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
-                            if result is None:
-                                logger.warning(f"Failed to send notification for txn {txn_id} to {chat_id}")
+                # Fetch items sold in this transaction
+                items_str = ""
+                try:
+                    products = fetch_transaction_products(txn_id)
+                    if products:
+                        items_list = []
+                        for p in products:
+                            qty = float(p.get('num', 1))
+                            name = p.get('product_name', 'Unknown')
+                            if qty == 1:
+                                items_list.append(name)
                             else:
-                                notifications_sent += 1
-                        except Conflict:
-                            logger.error("Bot conflict detected in check_new_transactions")
-                            return  # Stop, another instance is running
-                        except Exception as e:
-                            logger.error(f"Failed to send to {chat_id}: {e}")
-                            # Remove invalid chats
-                            if "chat not found" in str(e).lower() or "bot was blocked" in str(e).lower():
-                                subscribed_chats.discard(chat_id)
-                                save_config()
+                                items_list.append(f"{qty:.0f}x {name}")
+                        items_str = "\n<b>Items:</b> " + ", ".join(items_list)
+                except Exception as e:
+                    logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
 
-                logger.info(f"Sent {notifications_sent} notifications for {len(new_transactions)} new transactions")
+                message = (
+                    f"💰 <b>New Sale!</b>\n\n"
+                    f"<b>Amount:</b> {format_currency(total)}\n"
+                    f"<b>Profit:</b> {format_currency(profit)}\n"
+                    f"<b>Payment:</b> {payment}\n"
+                    f"<b>Table:</b> {table_name}"
+                    f"{items_str}"
+                )
 
-            # Update last seen ID only after successful processing
-            last_seen_transaction_id = latest_id_int
+                for chat_id in subscribed_chats.copy():
+                    try:
+                        result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
+                        if result is None:
+                            logger.warning(f"Failed to send notification for txn {txn_id} to {chat_id}")
+                        else:
+                            notifications_sent += 1
+                    except Conflict:
+                        logger.error("Bot conflict detected in check_new_transactions")
+                        return  # Stop, another instance is running
+                    except Exception as e:
+                        logger.error(f"Failed to send to {chat_id}: {e}")
+                        # Remove invalid chats
+                        if "chat not found" in str(e).lower() or "bot was blocked" in str(e).lower():
+                            subscribed_chats.discard(chat_id)
+                            save_config()
+
+            # Update after processing each transaction (sorted ascending)
+            last_seen_transaction_id = txn_id
             save_config()
+
+        if new_count > 0:
+            logger.info(f"Sent {notifications_sent} notifications for {new_count} new transactions")
         else:
-            logger.debug(f"No new transactions (latest: {latest_id_int}, last seen: {last_seen_int})")
+            logger.debug(f"No new transactions (last seen: {last_seen_int})")
 
     except Conflict:
         logger.error("Bot conflict detected - another instance may be running")
