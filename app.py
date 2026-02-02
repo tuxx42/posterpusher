@@ -126,8 +126,8 @@ def require_auth(func):
             return
         user = update.effective_user
         username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
-        cmd = update.message.text.split()[0] if update.message and update.message.text else func.__name__
-        logger.info(f"Command {cmd} from {username}")
+        text = update.message.text if update.message and update.message.text else func.__name__
+        logger.info(f"{username}: {text}")
         return await func(update, context)
     return wrapper
 
@@ -145,8 +145,8 @@ def require_admin(func):
             return
         user = update.effective_user
         username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
-        cmd = update.message.text.split()[0] if update.message and update.message.text else func.__name__
-        logger.info(f"Command {cmd} from {username} (admin)")
+        text = update.message.text if update.message and update.message.text else func.__name__
+        logger.info(f"{username} (admin): {text}")
         return await func(update, context)
     return wrapper
 
