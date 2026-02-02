@@ -2550,6 +2550,7 @@ async def check_new_transactions():
         if last_seen_transaction_id is None and transactions:
             latest_id = int(transactions[-1].get('transaction_id', 0) or 0)
             last_seen_transaction_id = latest_id
+            config.last_seen_transaction_id = last_seen_transaction_id
             save_config()
             logger.info(f"Initialized last_seen_transaction_id to {latest_id}")
             return
@@ -2631,6 +2632,7 @@ async def check_new_transactions():
 
             # Update after processing each transaction (sorted ascending)
             last_seen_transaction_id = txn_id
+            config.last_seen_transaction_id = last_seen_transaction_id
             save_config()
 
         if new_count > 0:
