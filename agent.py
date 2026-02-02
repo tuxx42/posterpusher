@@ -3,25 +3,38 @@ Anthropic AI Agent for querying Poster POS API.
 """
 import json
 import requests
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 POSTER_API_URL = "https://joinposter.com/api"
 
-SYSTEM_PROMPT = """You are a helpful assistant for a bar/restaurant business using Poster POS system.
+SYSTEM_PROMPT_TEMPLATE = """You are a helpful assistant for a bar/restaurant business using Poster POS system.
 You can query the Poster API to get information about sales, products, inventory, expenses, and cash register data.
+
+Today's date is: {today}
 
 When the user asks questions about the business, use the available tools to fetch the relevant data and provide a helpful summary.
 
 Guidelines:
 - Use appropriate date ranges when querying data (YYYYMMDD format)
-- For "today", use today's date
-- For "yesterday", use yesterday's date
+- For "today", use {today_yyyymmdd}
+- For "yesterday", use {yesterday_yyyymmdd}
 - For "this week", use the last 7 days
 - For "this month", use the first day of the current month to today
 - Summarize data clearly with key metrics and insights
 - Currency values from the API are in satang (1/100 of baht), divide by 100 for display
 - Format currency as Thai Baht (฿)
 - Keep responses concise but informative
+
+IMPORTANT - Use Telegram HTML formatting only:
+- <b>bold</b> for emphasis and headers
+- <i>italic</i> for secondary emphasis
+- <code>monospace</code> for numbers and IDs
+- Do NOT use Markdown (no ##, **, -, ```, etc.)
+- Use plain line breaks for lists, not bullet characters
+- Example list format:
+  <b>Items:</b>
+  Beer: 24 bottles
+  Wine: 12 bottles
 """
 
 TOOLS = [
@@ -139,15 +152,15 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str:
             url = f"{POSTER_API_URL}/dash.getTransactions"
             params = {
                 "token": poster_token,
-                "date_from": tool_input.get("date_from"),
-                "date_to": tool_input.get("date_to", tool_input.get("date_from"))
+                "dateFrom": tool_input.get("date_from"),
+                "dateTo": tool_input.get("date_to", tool_input.get("date_from"))
             }
         elif tool_name == "get_product_sales":
             url = f"{POSTER_API_URL}/dash.getProductsSales"
             params = {
                 "token": poster_token,
-                "date_from": tool_input.get("date_from"),
-                "date_to": tool_input.get("date_to", tool_input.get("date_from"))
+                "dateFrom": tool_input.get("date_from"),
+                "dateTo": tool_input.get("date_to", tool_input.get("date_from"))
             }
         elif tool_name == "get_stock_levels":
             url = f"{POSTER_API_URL}/storage.getStorageLeftovers"
@@ -202,6 +215,15 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str) -> s
 
     client = anthropic.Anthropic(api_key=anthropic_api_key)
 
+    # Build system prompt with current date
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        today=today.strftime('%B %d, %Y'),
+        today_yyyymmdd=today.strftime('%Y%m%d'),
+        yesterday_yyyymmdd=yesterday.strftime('%Y%m%d')
+    )
+
     messages = [{"role": "user", "content": prompt}]
 
     max_iterations = 10
@@ -213,7 +235,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str) -> s
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=4096,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             tools=TOOLS,
             messages=messages
         )

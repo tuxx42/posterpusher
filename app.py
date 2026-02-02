@@ -62,9 +62,16 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-POSTER_ACCESS_TOKEN = os.environ.get('POSTER_ACCESS_TOKEN')
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 POSTER_API_URL = "https://joinposter.com/api"
+
+# Import config module
+import config
+from config import (
+    CONFIG_FILE, load_config, save_config, mask_api_key,
+    set_api_key, delete_api_key, get_config_data,
+    subscribed_chats, theft_alert_chats, admin_chat_ids,
+    approved_users, pending_requests, alerted_transactions, alerted_expenses
+)
 
 # Import agent module (optional dependency)
 try:
@@ -91,94 +98,6 @@ REQUEST_POOL_TIMEOUT = 10
 MAX_RETRIES = 3
 RETRY_DELAY = 1  # Base delay in seconds for exponential backoff
 
-# Config file for persisting state
-CONFIG_FILE = os.environ.get('CONFIG_FILE', 'bot_config.json')
-
-# Track subscribed chats and last seen transaction
-subscribed_chats = set()
-theft_alert_chats = set()
-last_seen_transaction_id = None
-last_seen_void_id = None
-last_cash_balance = None
-
-# Authentication state
-admin_chat_ids = set()  # Set of admin chat IDs
-approved_users = {}   # {chat_id: {name, username, approved_at}}
-pending_requests = {} # {chat_id: {name, username, requested_at}}
-
-
-def load_config():
-    """Load persisted state from config file."""
-    global subscribed_chats, theft_alert_chats, admin_chat_ids, approved_users, pending_requests
-    global last_seen_transaction_id, last_seen_void_id, last_cash_balance
-    global alerted_transactions, alerted_expenses
-    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
-                config = json.load(f)
-                subscribed_chats = set(config.get('subscribed_chats', []))
-                theft_alert_chats = set(config.get('theft_alert_chats', []))
-                # Handle both old single admin and new multiple admins format
-                admin_chat_ids = set(config.get('admin_chat_ids', []))
-                # Backwards compatibility: migrate old admin_chat_id to new format
-                old_admin = config.get('admin_chat_id')
-                if old_admin and old_admin not in admin_chat_ids:
-                    admin_chat_ids.add(old_admin)
-                approved_users = config.get('approved_users', {})
-                pending_requests = config.get('pending_requests', {})
-                # Load theft detection state
-                last_seen_transaction_id = config.get('last_seen_transaction_id')
-                last_seen_void_id = config.get('last_seen_void_id')
-                last_cash_balance = config.get('last_cash_balance')
-                alerted_transactions = set(config.get('alerted_transactions', []))
-                alerted_expenses = set(config.get('alerted_expenses', []))
-                # Load API keys (config file overrides env vars)
-                if config.get('ANTHROPIC_API_KEY'):
-                    ANTHROPIC_API_KEY = config.get('ANTHROPIC_API_KEY')
-                if config.get('POSTER_ACCESS_TOKEN'):
-                    POSTER_ACCESS_TOKEN = config.get('POSTER_ACCESS_TOKEN')
-                logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, {len(admin_chat_ids)} admins")
-                logger.info(f"Loaded theft state: {len(alerted_transactions)} alerted txns, {len(alerted_expenses)} alerted expenses")
-    except Exception as e:
-        logger.error(f"Failed to load config: {e}")
-
-
-def save_config():
-    """Save state to config file."""
-    try:
-        # Read existing config to preserve API keys
-        existing_config = {}
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r') as f:
-                    existing_config = json.load(f)
-            except Exception:
-                pass
-
-        config = {
-            'subscribed_chats': list(subscribed_chats),
-            'theft_alert_chats': list(theft_alert_chats),
-            'admin_chat_ids': list(admin_chat_ids),
-            'approved_users': approved_users,
-            'pending_requests': pending_requests,
-            # Theft detection state
-            'last_seen_transaction_id': last_seen_transaction_id,
-            'last_seen_void_id': last_seen_void_id,
-            'last_cash_balance': last_cash_balance,
-            'alerted_transactions': list(alerted_transactions),
-            'alerted_expenses': list(alerted_expenses)
-        }
-        # Preserve API keys from existing config
-        if existing_config.get('ANTHROPIC_API_KEY'):
-            config['ANTHROPIC_API_KEY'] = existing_config['ANTHROPIC_API_KEY']
-        if existing_config.get('POSTER_ACCESS_TOKEN'):
-            config['POSTER_ACCESS_TOKEN'] = existing_config['POSTER_ACCESS_TOKEN']
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
-        logger.info("Config saved")
-    except Exception as e:
-        logger.error(f"Failed to save config: {e}")
 
 
 def require_auth(func):
@@ -294,12 +213,6 @@ LARGE_DISCOUNT_THRESHOLD = 20  # Alert if discount > 20%
 LARGE_REFUND_THRESHOLD = 50000  # Alert if refund > 500 THB (in cents)
 LARGE_EXPENSE_THRESHOLD = 100000  # Alert if single expense > 1000 THB (in cents)
 
-# Track expenses we've already alerted on
-alerted_expenses = set()
-
-# Track transactions we've already alerted on (to avoid duplicates)
-alerted_transactions = set()
-
 
 def format_currency(amount_in_cents):
     """Format amount from cents to THB."""
@@ -329,7 +242,7 @@ def get_business_date():
 def fetch_cash_shifts():
     """Fetch cash shift data from Poster API."""
     url = f"{POSTER_API_URL}/finance.getCashShifts"
-    params = {"token": POSTER_ACCESS_TOKEN}
+    params = {"token": config.POSTER_ACCESS_TOKEN}
 
     try:
         response = requests.get(url, params=params, timeout=10)
@@ -345,7 +258,7 @@ def fetch_finance_transactions(date_from, date_to=None):
     """Fetch finance transactions (expenses/income) from Poster API."""
     url = f"{POSTER_API_URL}/finance.getTransactions"
     params = {
-        "token": POSTER_ACCESS_TOKEN,
+        "token": config.POSTER_ACCESS_TOKEN,
         "dateFrom": date_from,
         "dateTo": date_to or date_from
     }
@@ -398,9 +311,9 @@ def fetch_transactions(date_from, date_to=None):
     """Fetch transactions for a date or date range from Poster API."""
     url = f"{POSTER_API_URL}/dash.getTransactions"
     params = {
-        "token": POSTER_ACCESS_TOKEN,
-        "date_from": date_from,
-        "date_to": date_to or date_from
+        "token": config.POSTER_ACCESS_TOKEN,
+        "dateFrom": date_from,
+        "dateTo": date_to or date_from
     }
 
     try:
@@ -417,9 +330,9 @@ def fetch_product_sales(date_from, date_to=None):
     """Fetch product-level sales data from Poster API."""
     url = f"{POSTER_API_URL}/dash.getProductsSales"
     params = {
-        "token": POSTER_ACCESS_TOKEN,
-        "date_from": date_from,
-        "date_to": date_to or date_from
+        "token": config.POSTER_ACCESS_TOKEN,
+        "dateFrom": date_from,
+        "dateTo": date_to or date_from
     }
 
     try:
@@ -435,7 +348,7 @@ def fetch_product_sales(date_from, date_to=None):
 def fetch_stock_levels():
     """Fetch current stock/inventory levels from Poster API."""
     url = f"{POSTER_API_URL}/storage.getStorageLeftovers"
-    params = {"token": POSTER_ACCESS_TOKEN}
+    params = {"token": config.POSTER_ACCESS_TOKEN}
 
     try:
         response = requests.get(url, params=params, timeout=15)
@@ -451,7 +364,7 @@ def fetch_transaction_products(transaction_id):
     """Fetch products for a specific transaction from Poster API."""
     url = f"{POSTER_API_URL}/dash.getTransactionProducts"
     params = {
-        "token": POSTER_ACCESS_TOKEN,
+        "token": config.POSTER_ACCESS_TOKEN,
         "transaction_id": transaction_id
     }
 
@@ -469,7 +382,7 @@ def fetch_ingredient_usage(date_from, date_to=None):
     """Fetch ingredient usage/movement from Poster API."""
     url = f"{POSTER_API_URL}/storage.getReportMovement"
     params = {
-        "token": POSTER_ACCESS_TOKEN,
+        "token": config.POSTER_ACCESS_TOKEN,
         "dateFrom": date_from,
         "dateTo": date_to or date_from
     }
@@ -985,24 +898,16 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"User demoted from admin: {target_chat_id}")
 
 
-def mask_api_key(key: str) -> str:
-    """Mask an API key for display, showing only first 4 and last 4 characters."""
-    if not key or len(key) < 12:
-        return "****"
-    return f"{key[:4]}...{key[-4:]}"
-
-
 @require_admin
-async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /config command - show or set configuration."""
-    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN
+    allowed_vars = ["ANTHROPIC_API_KEY", "POSTER_ACCESS_TOKEN"]
 
     # Handle /config set <VAR> <VALUE>
     if context.args and len(context.args) >= 3 and context.args[0].lower() == "set":
         var_name = context.args[1].upper()
         var_value = " ".join(context.args[2:])
 
-        allowed_vars = ["ANTHROPIC_API_KEY", "POSTER_ACCESS_TOKEN"]
         if var_name not in allowed_vars:
             await update.message.reply_text(
                 f"Unknown variable: {var_name}\n\n"
@@ -1012,26 +917,7 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        # Load existing config
-        config_data = {}
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r') as f:
-                    config_data = json.load(f)
-            except Exception:
-                pass
-
-        # Update the variable
-        config_data[var_name] = var_value
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config_data, f, indent=2)
-
-        # Update global variable
-        if var_name == "ANTHROPIC_API_KEY":
-            ANTHROPIC_API_KEY = var_value
-        elif var_name == "POSTER_ACCESS_TOKEN":
-            POSTER_ACCESS_TOKEN = var_value
-
+        set_api_key(var_name, var_value)
         await update.message.reply_text(
             f"✅ <b>{var_name}</b> has been set.\n"
             f"Value: <code>{mask_api_key(var_value)}</code>",
@@ -1040,21 +926,44 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info(f"Config variable {var_name} updated by admin")
         return
 
-    try:
-        if not os.path.exists(CONFIG_FILE):
-            await update.message.reply_text("No configuration file exists yet.")
+    # Handle /config del <VAR>
+    if context.args and len(context.args) >= 2 and context.args[0].lower() == "del":
+        var_name = context.args[1].upper()
+
+        if var_name not in allowed_vars:
+            await update.message.reply_text(
+                f"Unknown variable: {var_name}\n\n"
+                f"Allowed variables:\n"
+                f"• ANTHROPIC_API_KEY\n"
+                f"• POSTER_ACCESS_TOKEN"
+            )
             return
 
-        with open(CONFIG_FILE, 'r') as f:
-            config_data = json.load(f)
+        if delete_api_key(var_name):
+            await update.message.reply_text(
+                f"✅ <b>{var_name}</b> has been deleted.",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                f"Variable <b>{var_name}</b> was not set.",
+                parse_mode=ParseMode.HTML
+            )
+        return
+
+    try:
+        config_data = get_config_data()
+        if not config_data:
+            await update.message.reply_text("No configuration file exists yet.")
+            return
 
         # Format the config nicely
         message = "⚙️ <b>Bot Configuration</b>\n\n"
 
         # API Keys section
         message += "<b>API Keys:</b>\n"
-        anthropic_key = config_data.get('ANTHROPIC_API_KEY') or ANTHROPIC_API_KEY
-        poster_key = config_data.get('POSTER_ACCESS_TOKEN') or POSTER_ACCESS_TOKEN
+        anthropic_key = config_data.get('ANTHROPIC_API_KEY') or config.ANTHROPIC_API_KEY
+        poster_key = config_data.get('POSTER_ACCESS_TOKEN') or config.POSTER_ACCESS_TOKEN
         message += f"  • ANTHROPIC_API_KEY: <code>{mask_api_key(anthropic_key) if anthropic_key else 'Not set'}</code>\n"
         message += f"  • POSTER_ACCESS_TOKEN: <code>{mask_api_key(poster_key) if poster_key else 'Not set'}</code>\n\n"
 
@@ -1182,7 +1091,7 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    if not ANTHROPIC_API_KEY:
+    if not config.ANTHROPIC_API_KEY:
         await update.message.reply_text(
             "ANTHROPIC_API_KEY is not configured.\n\n"
             "Ask an admin to set it with:\n"
@@ -1191,7 +1100,7 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    if not POSTER_ACCESS_TOKEN:
+    if not config.POSTER_ACCESS_TOKEN:
         await update.message.reply_text(
             "POSTER_ACCESS_TOKEN is not configured.\n\n"
             "Ask an admin to set it with:\n"
@@ -1218,19 +1127,19 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     thinking_msg = await update.message.reply_text("🤔 Thinking...")
 
     try:
-        response = await run_agent(prompt, ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN)
+        response = await run_agent(prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN)
 
         # Delete thinking message
         await thinking_msg.delete()
 
         # Handle long responses (Telegram limit is 4096 chars)
         if len(response) <= 4000:
-            await update.message.reply_text(response)
+            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
         else:
             # Split into multiple messages
             chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
             for chunk in chunks:
-                await update.message.reply_text(chunk)
+                await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
     except Exception as e:
         logger.error(f"Agent error: {e}")
@@ -2180,7 +2089,7 @@ def fetch_removed_transactions(date_from, date_to=None):
     """Fetch removed/voided transactions from Poster API."""
     url = f"{POSTER_API_URL}/dash.getTransactions"
     params = {
-        "token": POSTER_ACCESS_TOKEN,
+        "token": config.POSTER_ACCESS_TOKEN,
         "date_from": date_from,
         "date_to": date_to or date_from,
         "status": "3"  # Status 3 = removed/voided
@@ -2679,6 +2588,17 @@ class MockMessage:
         clean_text = re.sub(r'<[^>]+>', '', text)
         print(f"\n{clean_text}")
         self.responses.append(text)
+        return self  # Return self so delete/edit can be called on it
+
+    async def delete(self):
+        """Mock delete - just clears the last line in CLI."""
+        pass
+
+    async def edit_text(self, text, parse_mode=None, **kwargs):
+        """Mock edit - prints the new text."""
+        import re
+        clean_text = re.sub(r'<[^>]+>', '', text)
+        print(f"\n{clean_text}")
 
 
 class MockChat:
@@ -2703,7 +2623,7 @@ class MockContext:
 async def cli_mode():
     """Run bot in CLI test mode - accepts commands from stdin."""
     print("=" * 60)
-    print("CLI Test Mode - Type commands like /debug, /resend, /today")
+    print("CLI Test Mode - Type commands like /today, /agent <question>")
     print("Type 'exit' or 'quit' to stop")
     print("=" * 60)
 
@@ -2723,7 +2643,7 @@ async def cli_mode():
         '/debug': debug,
         '/resend': resend,
         '/loglevel': loglevel,
-        '/config': config,
+        '/config': config_cmd,
         '/products': products,
         '/stats': stats,
         '/sales': sales,
@@ -2737,6 +2657,7 @@ async def cli_mode():
         '/expenses': expenses,
         '/users': users,
         '/help': help_command,
+        '/agent': agent,
         '/check_transactions': lambda u, c: check_new_transactions(),
         '/check_theft': lambda u, c: check_theft_indicators(),
     }
@@ -2788,12 +2709,12 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN not set")
         return
 
-    if not POSTER_ACCESS_TOKEN:
-        logger.error("POSTER_ACCESS_TOKEN not set")
-        return
-
-    # Load persisted state
+    # Load persisted state (may contain POSTER_ACCESS_TOKEN)
     load_config()
+
+    if not config.POSTER_ACCESS_TOKEN:
+        logger.error("POSTER_ACCESS_TOKEN not set (set via env var or /config set)")
+        return
 
     # Configure request with proper timeouts and connection pooling
     request = HTTPXRequest(
@@ -2831,7 +2752,7 @@ def main():
     application.add_handler(CommandHandler("users", users))
     application.add_handler(CommandHandler("promote", promote))
     application.add_handler(CommandHandler("demote", demote))
-    application.add_handler(CommandHandler("config", config))
+    application.add_handler(CommandHandler("config", config_cmd))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("debug", debug))
     application.add_handler(CommandHandler("resend", resend))
