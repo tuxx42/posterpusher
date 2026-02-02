@@ -41,36 +41,53 @@ def mask_api_key(key: str) -> str:
 
 def load_config():
     """Load persisted state from config file."""
-    global subscribed_chats, theft_alert_chats, admin_chat_ids, approved_users, pending_requests
     global last_seen_transaction_id, last_seen_void_id, last_cash_balance
-    global alerted_transactions, alerted_expenses
     global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN
 
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
-                config = json.load(f)
-                subscribed_chats = set(config.get('subscribed_chats', []))
-                theft_alert_chats = set(config.get('theft_alert_chats', []))
+                cfg = json.load(f)
+                # Update sets/dicts in place so imported references see changes
+                # Convert all chat IDs to strings for consistent comparison
+                subscribed_chats.clear()
+                subscribed_chats.update(str(x) for x in cfg.get('subscribed_chats', []))
+
+                theft_alert_chats.clear()
+                theft_alert_chats.update(str(x) for x in cfg.get('theft_alert_chats', []))
+
                 # Handle both old single admin and new multiple admins format
-                admin_chat_ids = set(config.get('admin_chat_ids', []))
+                admin_chat_ids.clear()
+                admin_chat_ids.update(str(x) for x in cfg.get('admin_chat_ids', []))
                 # Backwards compatibility: migrate old admin_chat_id to new format
-                old_admin = config.get('admin_chat_id')
-                if old_admin and old_admin not in admin_chat_ids:
-                    admin_chat_ids.add(old_admin)
-                approved_users = config.get('approved_users', {})
-                pending_requests = config.get('pending_requests', {})
+                old_admin = cfg.get('admin_chat_id')
+                if old_admin and str(old_admin) not in admin_chat_ids:
+                    admin_chat_ids.add(str(old_admin))
+
+                # Ensure approved_users keys are strings
+                approved_users.clear()
+                approved_users.update({str(k): v for k, v in cfg.get('approved_users', {}).items()})
+
+                pending_requests.clear()
+                pending_requests.update({str(k): v for k, v in cfg.get('pending_requests', {}).items()})
+
                 # Load theft detection state
-                last_seen_transaction_id = config.get('last_seen_transaction_id')
-                last_seen_void_id = config.get('last_seen_void_id')
-                last_cash_balance = config.get('last_cash_balance')
-                alerted_transactions = set(config.get('alerted_transactions', []))
-                alerted_expenses = set(config.get('alerted_expenses', []))
+                last_seen_transaction_id = cfg.get('last_seen_transaction_id')
+                last_seen_void_id = cfg.get('last_seen_void_id')
+                last_cash_balance = cfg.get('last_cash_balance')
+
+                alerted_transactions.clear()
+                alerted_transactions.update(cfg.get('alerted_transactions', []))
+
+                alerted_expenses.clear()
+                alerted_expenses.update(cfg.get('alerted_expenses', []))
+
                 # Load API keys (config file overrides env vars)
-                if config.get('ANTHROPIC_API_KEY'):
-                    ANTHROPIC_API_KEY = config.get('ANTHROPIC_API_KEY')
-                if config.get('POSTER_ACCESS_TOKEN'):
-                    POSTER_ACCESS_TOKEN = config.get('POSTER_ACCESS_TOKEN')
+                if cfg.get('ANTHROPIC_API_KEY'):
+                    ANTHROPIC_API_KEY = cfg.get('ANTHROPIC_API_KEY')
+                if cfg.get('POSTER_ACCESS_TOKEN'):
+                    POSTER_ACCESS_TOKEN = cfg.get('POSTER_ACCESS_TOKEN')
+
                 logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, {len(admin_chat_ids)} admins")
                 logger.info(f"Loaded theft state: {len(alerted_transactions)} alerted txns, {len(alerted_expenses)} alerted expenses")
     except Exception as e:
