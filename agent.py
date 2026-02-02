@@ -8,7 +8,8 @@ from datetime import datetime, date, timedelta
 POSTER_API_URL = "https://joinposter.com/api"
 
 SYSTEM_PROMPT_TEMPLATE = """You are a helpful assistant for a bar/restaurant business using Poster POS system.
-You can query the Poster API to get information about sales, products, inventory, expenses, and cash register data.
+You have READ-ONLY access to query the Poster API for sales, products, inventory, expenses, and cash register data.
+You cannot modify any data - only retrieve and analyze it.
 
 Today's date is: {today}
 
@@ -145,8 +146,28 @@ TOOLS = [
 ]
 
 
+# Whitelist of allowed read-only tools
+ALLOWED_TOOLS = {
+    "get_transactions",
+    "get_product_sales",
+    "get_stock_levels",
+    "get_ingredient_usage",
+    "get_finance_transactions",
+    "get_cash_shifts",
+    "get_transaction_products",
+}
+
+
 def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str:
-    """Execute a tool call against the Poster API."""
+    """Execute a read-only tool call against the Poster API.
+
+    All operations are strictly read-only (HTTP GET only).
+    No data modification is possible through these tools.
+    """
+    # Safety check: only allow whitelisted read-only tools
+    if tool_name not in ALLOWED_TOOLS:
+        return json.dumps({"error": f"Tool not allowed: {tool_name}"})
+
     try:
         if tool_name == "get_transactions":
             url = f"{POSTER_API_URL}/dash.getTransactions"
