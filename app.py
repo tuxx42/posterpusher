@@ -2747,6 +2747,15 @@ async def cli_mode():
     # Load config
     load_config()
 
+    # Sync theft detection state from config module
+    global last_seen_transaction_id, last_seen_void_id, last_cash_balance
+    global last_alerted_transaction_id, last_alerted_expense_id
+    last_seen_transaction_id = config.last_seen_transaction_id
+    last_seen_void_id = config.last_seen_void_id
+    last_cash_balance = config.last_cash_balance
+    last_alerted_transaction_id = config.last_alerted_transaction_id
+    last_alerted_expense_id = config.last_alerted_expense_id
+
     # Apply configured log level
     log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
     logger.setLevel(log_level)
@@ -2833,6 +2842,15 @@ def main():
 
     # Load persisted state (may contain POSTER_ACCESS_TOKEN)
     load_config()
+
+    # Sync theft detection state from config module
+    global last_seen_transaction_id, last_seen_void_id, last_cash_balance
+    global last_alerted_transaction_id, last_alerted_expense_id
+    last_seen_transaction_id = config.last_seen_transaction_id
+    last_seen_void_id = config.last_seen_void_id
+    last_cash_balance = config.last_cash_balance
+    last_alerted_transaction_id = config.last_alerted_transaction_id
+    last_alerted_expense_id = config.last_alerted_expense_id
 
     # Apply configured log level
     log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
