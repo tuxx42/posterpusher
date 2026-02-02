@@ -26,8 +26,8 @@ theft_alert_chats = set()
 last_seen_transaction_id = None
 last_seen_void_id = None
 last_cash_balance = None
-alerted_transactions = set()
-alerted_expenses = set()
+last_alerted_transaction_id = 0
+last_alerted_expense_id = 0
 
 # Authentication state
 admin_chat_ids = set()
@@ -226,11 +226,9 @@ def load_config():
                 last_seen_void_id = cfg.get('last_seen_void_id')
                 last_cash_balance = cfg.get('last_cash_balance')
 
-                alerted_transactions.clear()
-                alerted_transactions.update(cfg.get('alerted_transactions', []))
-
-                alerted_expenses.clear()
-                alerted_expenses.update(cfg.get('alerted_expenses', []))
+                global last_alerted_transaction_id, last_alerted_expense_id
+                last_alerted_transaction_id = cfg.get('last_alerted_transaction_id', 0)
+                last_alerted_expense_id = cfg.get('last_alerted_expense_id', 0)
 
                 # Load API keys (config file overrides env vars)
                 if cfg.get('ANTHROPIC_API_KEY'):
@@ -243,7 +241,7 @@ def load_config():
                     LOG_LEVEL = cfg.get('LOG_LEVEL').upper()
 
                 logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, {len(admin_chat_ids)} admins")
-                logger.info(f"Loaded theft state: {len(alerted_transactions)} alerted txns, {len(alerted_expenses)} alerted expenses")
+                logger.info(f"Loaded theft state: last_txn_id={last_alerted_transaction_id}, last_expense_id={last_alerted_expense_id}")
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
 
@@ -270,8 +268,8 @@ def save_config():
             'last_seen_transaction_id': last_seen_transaction_id,
             'last_seen_void_id': last_seen_void_id,
             'last_cash_balance': last_cash_balance,
-            'alerted_transactions': list(alerted_transactions),
-            'alerted_expenses': list(alerted_expenses)
+            'last_alerted_transaction_id': last_alerted_transaction_id,
+            'last_alerted_expense_id': last_alerted_expense_id
         }
         # Preserve API keys and log level from existing config
         if existing_config.get('ANTHROPIC_API_KEY'):

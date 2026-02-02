@@ -75,7 +75,7 @@ from config import (
     CONFIG_FILE, load_config, save_config, mask_api_key,
     set_api_key, delete_api_key, get_config_data,
     subscribed_chats, theft_alert_chats, admin_chat_ids,
-    approved_users, pending_requests, alerted_transactions, alerted_expenses,
+    approved_users, pending_requests, last_alerted_transaction_id, last_alerted_expense_id,
     last_seen_transaction_id, last_seen_void_id, last_cash_balance,
     check_agent_rate_limit, record_agent_usage, get_agent_usage,
     get_agent_limits, set_agent_limit,
@@ -1048,7 +1048,7 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /reset command - delete configuration and reset bot."""
     global admin_chat_ids, approved_users, pending_requests, subscribed_chats, theft_alert_chats
-    global last_seen_transaction_id, last_seen_void_id, last_cash_balance, alerted_transactions, alerted_expenses
+    global last_seen_transaction_id, last_seen_void_id, last_cash_balance, last_alerted_transaction_id, last_alerted_expense_id
 
     # Check for confirmation argument
     if not context.args or context.args[0] != "CONFIRM":
@@ -1081,8 +1081,8 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         last_seen_transaction_id = None
         last_seen_void_id = None
         last_cash_balance = None
-        alerted_transactions = set()
-        alerted_expenses = set()
+        last_alerted_transaction_id = 0
+        last_alerted_expense_id = 0
 
         await update.message.reply_text(
             "✅ <b>Configuration Reset</b>\n\n"
@@ -2328,7 +2328,7 @@ async def send_theft_alert(alert_type, message):
 
 async def check_theft_indicators():
     """Check for potential theft indicators."""
-    global last_seen_void_id, last_cash_balance
+    global last_seen_void_id, last_cash_balance, last_alerted_transaction_id, last_alerted_expense_id
 
     if not theft_alert_chats:
         return
@@ -2372,13 +2372,15 @@ async def check_theft_indicators():
 
         # Check for suspicious transactions
         transactions = fetch_transactions(today_str)
+        max_txn_id = last_alerted_transaction_id
         for txn in transactions:
-            txn_id = txn.get('transaction_id')
-            alert_key = f"txn_{txn_id}"
+            txn_id = int(txn.get('transaction_id', 0) or 0)
 
-            # Skip if we've already alerted on this transaction
-            if alert_key in alerted_transactions:
+            # Skip if we've already checked this transaction
+            if txn_id <= last_alerted_transaction_id:
                 continue
+
+            max_txn_id = max(max_txn_id, txn_id)
 
             total = int(txn.get('sum', 0) or 0)
             payed_sum = int(txn.get('payed_sum', 0) or 0)
@@ -2391,7 +2393,6 @@ async def check_theft_indicators():
             if status == '2' and total > 0:  # Status 2 = closed
                 if payed_sum == 0:
                     # Closed with NO payment - high alert!
-                    alerted_transactions.add(alert_key)
                     alert_msg = (
                         f"🚨 <b>NO PAYMENT ALERT</b>\n\n"
                         f"<b>Order closed without payment!</b>\n\n"
@@ -2406,7 +2407,6 @@ async def check_theft_indicators():
                 elif payed_sum < total:
                     # Partial payment - also suspicious
                     shortage = total - payed_sum
-                    alerted_transactions.add(alert_key)
                     alert_msg = (
                         f"⚠️ <b>UNDERPAYMENT ALERT</b>\n\n"
                         f"<b>Order Amount:</b> {format_currency(total)}\n"
@@ -2425,19 +2425,18 @@ async def check_theft_indicators():
                 discount_pct = (discount / original) * 100
 
                 if discount_pct > LARGE_DISCOUNT_THRESHOLD:
-                    discount_key = f"discount_{txn_id}"
-                    if discount_key not in alerted_transactions:
-                        alerted_transactions.add(discount_key)
-                        alert_msg = (
-                            f"⚠️ <b>LARGE DISCOUNT ALERT</b>\n\n"
-                            f"<b>Discount:</b> {discount_pct:.1f}% ({format_currency(discount)})\n"
-                            f"<b>Final Amount:</b> {format_currency(total)}\n"
-                            f"<b>Staff:</b> {staff}\n"
-                            f"<b>Table:</b> {table}\n"
-                            f"<b>Transaction:</b> #{txn_id}\n\n"
-                            f"⚠️ Please verify this discount was authorized."
-                        )
-                        await send_theft_alert("discount", alert_msg)
+                    alert_msg = (
+                        f"⚠️ <b>LARGE DISCOUNT ALERT</b>\n\n"
+                        f"<b>Discount:</b> {discount_pct:.1f}% ({format_currency(discount)})\n"
+                        f"<b>Final Amount:</b> {format_currency(total)}\n"
+                        f"<b>Staff:</b> {staff}\n"
+                        f"<b>Table:</b> {table}\n"
+                        f"<b>Transaction:</b> #{txn_id}\n\n"
+                        f"⚠️ Please verify this discount was authorized."
+                    )
+                    await send_theft_alert("discount", alert_msg)
+
+        last_alerted_transaction_id = max_txn_id
 
         # Check cash register discrepancies
         shifts = fetch_cash_shifts()
@@ -2480,13 +2479,15 @@ async def check_theft_indicators():
         finance_txns = fetch_finance_transactions(today_str)
         expenses_data = calculate_expenses(finance_txns)
 
+        max_expense_id = last_alerted_expense_id
         for expense in expenses_data['expense_list']:
-            expense_id = expense.get('transaction_id', '')
-            if expense_id in alerted_expenses:
+            expense_id = int(expense.get('transaction_id', 0) or 0)
+            if expense_id <= last_alerted_expense_id:
                 continue
 
+            max_expense_id = max(max_expense_id, expense_id)
+
             if expense['amount'] >= LARGE_EXPENSE_THRESHOLD:
-                alerted_expenses.add(expense_id)
                 comment = expense['comment'] or 'No description'
                 category = expense['category'] or 'Uncategorized'
 
@@ -2499,6 +2500,8 @@ async def check_theft_indicators():
                     f"⚠️ Please verify this expense was authorized."
                 )
                 await send_theft_alert("large_expense", alert_msg)
+
+        last_alerted_expense_id = max_expense_id
 
         # Save state after checking to persist alerted items
         save_config()
