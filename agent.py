@@ -13,7 +13,7 @@ You cannot modify any data - only retrieve and analyze it.
 
 Today's date is: {today}
 
-IMPORTANT: You have a maximum of {max_iterations} tool calls for this request (limit varies per user). Plan accordingly:
+IMPORTANT: You have a maximum of {max_iterations} tool calls for this request. Plan accordingly:
 - Prioritize the most important data first
 - Combine related queries if possible
 - If a request requires more data than you can fetch, answer with what you have and note what's missing
