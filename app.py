@@ -2345,6 +2345,7 @@ async def check_theft_indicators():
 
             if last_seen_void_id is None:
                 last_seen_void_id = latest_void_id
+                config.last_seen_void_id = last_seen_void_id
                 save_config()
             elif latest_void_id != last_seen_void_id:
                 # New void detected
@@ -2504,6 +2505,11 @@ async def check_theft_indicators():
             # Update after processing each expense (sorted ascending)
             last_alerted_expense_id = expense_id
 
+        # Sync state back to config module before saving
+        config.last_seen_void_id = last_seen_void_id
+        config.last_cash_balance = last_cash_balance
+        config.last_alerted_transaction_id = last_alerted_transaction_id
+        config.last_alerted_expense_id = last_alerted_expense_id
         # Save state after checking to persist alerted items
         save_config()
 
