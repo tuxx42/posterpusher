@@ -36,8 +36,8 @@ pending_requests = {}
 
 # Agent configuration defaults
 AGENT_DEFAULTS = {
-    'daily_limit': 20,
-    'max_iterations': 5,
+    'daily_limit': 10,
+    'max_iterations': 3,
     'history_limit': 10
 }
 

@@ -310,4 +310,29 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
             response_text = final_text if final_text else "No response generated."
             return response_text, messages[-10:]
 
+    # Reached max iterations - ask the model to summarize what it found
+    messages.append({
+        "role": "user",
+        "content": "You've reached the maximum number of tool calls. Please summarize what you've found so far based on the data you've already retrieved. If you couldn't complete the request, explain what information is missing."
+    })
+
+    try:
+        summary_response = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            system=system_prompt,
+            messages=messages
+        )
+
+        summary_text = ""
+        for block in summary_response.content:
+            if hasattr(block, "text"):
+                summary_text += block.text
+
+        if summary_text:
+            messages.append({"role": "assistant", "content": summary_text})
+            return summary_text, messages[-10:]
+    except Exception:
+        pass
+
     return "Agent reached maximum iterations without completing.", messages[-10:]
