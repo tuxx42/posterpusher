@@ -5,6 +5,8 @@ import json
 import requests
 from datetime import datetime, date, timedelta
 
+from charts import generate_generic_chart
+
 POSTER_API_URL = "https://joinposter.com/api"
 
 SYSTEM_PROMPT_TEMPLATE = """You are a helpful assistant for a bar/restaurant business using Poster POS system.
@@ -41,6 +43,13 @@ IMPORTANT - Use Telegram HTML formatting only:
   <b>Items:</b>
   Beer: 24 bottles
   Wine: 12 bottles
+
+When presenting numerical data, consider using the plot_graph tool to create visualizations:
+- Use pie charts for showing proportions or market share
+- Use bar charts for comparing categories or showing rankings
+- Use line charts for showing trends over time
+- Use horizontal bar charts for ranked lists with long labels
+Always provide a text summary alongside any chart.
 """
 
 TOOLS = [
@@ -147,6 +156,54 @@ TOOLS = [
             },
             "required": ["transaction_id"]
         }
+    },
+    {
+        "name": "plot_graph",
+        "description": "Generate a chart/graph visualization. Use this after fetching data to visualize it. Always provide a text summary alongside the chart.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chart_type": {
+                    "type": "string",
+                    "enum": ["bar", "horizontal_bar", "pie", "line"],
+                    "description": "Type of chart: bar (vertical), horizontal_bar, pie, or line"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Labels for data points (x-axis for bar/line, slice names for pie)"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Single series of numeric data values"
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "data": {"type": "array", "items": {"type": "number"}}
+                        }
+                    },
+                    "description": "Multiple data series for grouped charts (alternative to 'data')"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Chart title"
+                },
+                "x_label": {
+                    "type": "string",
+                    "description": "X-axis label"
+                },
+                "y_label": {
+                    "type": "string",
+                    "description": "Y-axis label"
+                }
+            },
+            "required": ["chart_type", "labels"]
+        }
     }
 ]
 
@@ -160,20 +217,50 @@ ALLOWED_TOOLS = {
     "get_finance_transactions",
     "get_cash_shifts",
     "get_transaction_products",
+    "plot_graph",
 }
 
 
-def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str:
-    """Execute a read-only tool call against the Poster API.
+def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | tuple[str, object]:
+    """Execute a tool call.
 
-    All operations are strictly read-only (HTTP GET only).
-    No data modification is possible through these tools.
+    For API tools: strictly read-only (HTTP GET only).
+    For plot_graph: generates a chart image.
+
+    Returns:
+        str: Tool result text (for API tools)
+        tuple[str, BytesIO]: (result text, chart buffer) for plot_graph
     """
-    # Safety check: only allow whitelisted read-only tools
+    # Safety check: only allow whitelisted tools
     if tool_name not in ALLOWED_TOOLS:
         return json.dumps({"error": f"Tool not allowed: {tool_name}"})
 
     try:
+        # Handle plot_graph tool separately
+        if tool_name == "plot_graph":
+            chart_type = tool_input.get("chart_type", "bar")
+            labels = tool_input.get("labels", [])
+            data = tool_input.get("data")
+            series = tool_input.get("series")
+            title = tool_input.get("title")
+            x_label = tool_input.get("x_label")
+            y_label = tool_input.get("y_label")
+
+            chart_buf = generate_generic_chart(
+                chart_type=chart_type,
+                labels=labels,
+                data=data,
+                series=series,
+                title=title,
+                x_label=x_label,
+                y_label=y_label
+            )
+
+            if chart_buf:
+                return ("Chart generated successfully.", chart_buf)
+            else:
+                return json.dumps({"error": "Failed to generate chart. Charts may not be available."})
+
         if tool_name == "get_transactions":
             url = f"{POSTER_API_URL}/dash.getTransactions"
             params = {
@@ -235,7 +322,7 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str:
         return json.dumps({"error": f"Tool execution failed: {str(e)}"})
 
 
-async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, model: str = "claude-sonnet-4-20250514", history: list = None, max_iterations: int = 5) -> tuple[str, list]:
+async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, model: str = "claude-sonnet-4-20250514", history: list = None, max_iterations: int = 5) -> tuple[str, list, list]:
     """Run the Anthropic agent with tool calling.
 
     Args:
@@ -247,7 +334,8 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
         max_iterations: Maximum tool use iterations (default 5)
 
     Returns:
-        Tuple of (response_text, updated_messages[-10:])
+        Tuple of (response_text, updated_messages[-10:], charts)
+        where charts is a list of BytesIO buffers containing generated chart images
     """
     import anthropic
 
@@ -268,6 +356,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
     messages.append({"role": "user", "content": prompt})
 
     iteration = 0
+    charts = []  # Track generated chart images
 
     while iteration < max_iterations:
         iteration += 1
@@ -293,11 +382,22 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
                         block.input,
                         poster_token
                     )
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": tool_result
-                    })
+
+                    # Handle chart generation (returns tuple)
+                    if isinstance(tool_result, tuple):
+                        result_text, chart_buf = tool_result
+                        charts.append(chart_buf)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result_text
+                        })
+                    else:
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": tool_result
+                        })
 
             # Add assistant response and tool results to messages
             messages.append({"role": "assistant", "content": assistant_content})
@@ -314,7 +414,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
             messages.append({"role": "assistant", "content": final_text})
 
             response_text = final_text if final_text else "No response generated."
-            return response_text, messages[-10:]
+            return response_text, messages[-10:], charts
 
     # Reached max iterations - ask the model to summarize what it found
     messages.append({
@@ -337,8 +437,8 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
 
         if summary_text:
             messages.append({"role": "assistant", "content": summary_text})
-            return summary_text, messages[-10:]
+            return summary_text, messages[-10:], charts
     except Exception:
         pass
 
-    return "Agent reached maximum iterations without completing.", messages[-10:]
+    return "Agent reached maximum iterations without completing.", messages[-10:], charts

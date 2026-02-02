@@ -1223,7 +1223,7 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Get existing conversation history for this user
         history = agent_conversations.get(user_id, [])
 
-        response, updated_history = await run_agent(
+        response, updated_history, charts = await run_agent(
             prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN,
             history=history, max_iterations=user_limits['max_iterations']
         )
@@ -1247,6 +1247,10 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 if i == len(chunks) - 1:  # Last chunk
                     chunk += usage_footer
                 await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+        # Send any generated charts
+        for chart in charts:
+            await update.message.reply_photo(photo=chart)
 
     except Exception as e:
         logger.error(f"Agent error: {e}")

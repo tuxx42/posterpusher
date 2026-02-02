@@ -173,6 +173,141 @@ def generate_ingredients_chart(usage_data, title, top_n=15):
     return buf
 
 
+def generate_generic_chart(chart_type, labels, data=None, series=None, title=None, x_label=None, y_label=None):
+    """Generate a chart from generic parameters.
+
+    Args:
+        chart_type: "bar", "horizontal_bar", "pie", "line"
+        labels: List of labels for data points
+        data: Single series data (list of numbers)
+        series: Multi-series data (list of {"name": str, "data": list})
+        title: Chart title
+        x_label, y_label: Axis labels
+
+    Returns:
+        BytesIO buffer with PNG image, or None if charts unavailable
+    """
+    if not CHARTS_AVAILABLE:
+        return None
+
+    if not labels:
+        return None
+
+    # Need either data or series
+    if data is None and series is None:
+        return None
+
+    # Color palette for multiple series
+    colors = ['#2196F3', '#4CAF50', '#FF9800', '#F44336', '#9C27B0', '#00BCD4', '#795548', '#607D8B']
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    if chart_type == "pie":
+        # Pie chart - single series only
+        values = data if data else (series[0]['data'] if series else [])
+        if not values:
+            plt.close(fig)
+            return None
+
+        # Filter out zero/negative values for pie chart
+        filtered = [(l, v) for l, v in zip(labels, values) if v > 0]
+        if not filtered:
+            plt.close(fig)
+            return None
+
+        pie_labels, pie_values = zip(*filtered)
+        wedges, texts, autotexts = ax.pie(
+            pie_values,
+            labels=pie_labels,
+            autopct='%1.1f%%',
+            colors=colors[:len(pie_values)]
+        )
+        ax.axis('equal')
+
+    elif chart_type == "horizontal_bar":
+        # Horizontal bar chart
+        y_pos = range(len(labels))
+
+        if series:
+            # Multi-series horizontal bar
+            height = 0.8 / len(series)
+            for i, s in enumerate(series):
+                offset = (i - len(series) / 2 + 0.5) * height
+                ax.barh([y + offset for y in y_pos], s['data'], height,
+                       label=s.get('name', f'Series {i+1}'), color=colors[i % len(colors)])
+            ax.legend()
+        else:
+            # Single series
+            ax.barh(y_pos, data, color=colors[0])
+
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(labels)
+        ax.invert_yaxis()  # Top item first
+        if x_label:
+            ax.set_xlabel(x_label)
+        ax.grid(axis='x', alpha=0.3)
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:,.0f}'))
+
+    elif chart_type == "line":
+        # Line chart
+        x_pos = range(len(labels))
+
+        if series:
+            # Multi-series line
+            for i, s in enumerate(series):
+                ax.plot(x_pos, s['data'], marker='o',
+                       label=s.get('name', f'Series {i+1}'), color=colors[i % len(colors)])
+            ax.legend()
+        else:
+            # Single series
+            ax.plot(x_pos, data, marker='o', color=colors[0])
+
+        ax.set_xticks(list(x_pos))
+        ax.set_xticklabels(labels, rotation=45, ha='right')
+        if x_label:
+            ax.set_xlabel(x_label)
+        if y_label:
+            ax.set_ylabel(y_label)
+        ax.grid(alpha=0.3)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:,.0f}'))
+
+    else:  # bar (vertical)
+        x_pos = range(len(labels))
+
+        if series:
+            # Multi-series bar
+            width = 0.8 / len(series)
+            for i, s in enumerate(series):
+                offset = (i - len(series) / 2 + 0.5) * width
+                ax.bar([x + offset for x in x_pos], s['data'], width,
+                      label=s.get('name', f'Series {i+1}'), color=colors[i % len(colors)])
+            ax.legend()
+        else:
+            # Single series
+            ax.bar(x_pos, data, color=colors[0])
+
+        ax.set_xticks(list(x_pos))
+        ax.set_xticklabels(labels, rotation=45, ha='right')
+        if x_label:
+            ax.set_xlabel(x_label)
+        if y_label:
+            ax.set_ylabel(y_label)
+        ax.grid(axis='y', alpha=0.3)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:,.0f}'))
+
+    if title:
+        ax.set_title(title)
+
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+
+    return buf
+
+
 def generate_stats_chart(current_sales, prev_sales, title, current_label, prev_label):
     """Generate a comparison bar chart for stats."""
     if not current_sales or not CHARTS_AVAILABLE:
