@@ -31,6 +31,117 @@ admin_chat_ids = set()
 approved_users = {}
 pending_requests = {}
 
+# Agent configuration defaults
+AGENT_DEFAULTS = {
+    'daily_limit': 20,
+    'max_iterations': 5,
+    'history_limit': 10
+}
+
+# Rate limiting for /agent command
+AGENT_DAILY_LIMIT = AGENT_DEFAULTS['daily_limit']  # Default max requests per user per day
+agent_usage = {}  # {user_id: {'date': 'YYYY-MM-DD', 'count': N}}
+
+# Conversation memory for /agent command
+AGENT_HISTORY_LIMIT = AGENT_DEFAULTS['history_limit']  # Keep last N messages per user
+agent_conversations = {}  # {user_id: [messages]}
+
+# Per-user agent limits (overrides defaults)
+agent_user_limits = {}  # {user_id: {'daily_limit': N, 'max_iterations': N}}
+
+
+def get_agent_limits(user_id: str) -> dict:
+    """Get agent limits for a user.
+
+    Returns:
+        Dict with 'daily_limit', 'max_iterations', 'history_limit' keys
+    """
+    user_id = str(user_id)
+    limits = dict(AGENT_DEFAULTS)  # Start with defaults
+    if user_id in agent_user_limits:
+        limits.update(agent_user_limits[user_id])
+    return limits
+
+
+def set_agent_limit(user_id: str, key: str, value: int) -> bool:
+    """Set a limit for a specific user.
+
+    Args:
+        user_id: The user ID to set limit for
+        key: Limit key ('daily_limit' or 'max_iterations')
+        value: The limit value
+
+    Returns:
+        True if successful, False if invalid key
+    """
+    if key not in ('daily_limit', 'max_iterations'):
+        return False
+
+    user_id = str(user_id)
+    if user_id not in agent_user_limits:
+        agent_user_limits[user_id] = {}
+    agent_user_limits[user_id][key] = value
+    return True
+
+
+def check_agent_rate_limit(user_id: str) -> tuple[bool, int]:
+    """Check if user is within rate limit for /agent.
+
+    Returns:
+        (allowed, remaining): Whether request is allowed and remaining quota
+    """
+    from datetime import date
+    today = date.today().isoformat()
+    user_id = str(user_id)
+
+    # Get per-user daily limit
+    limits = get_agent_limits(user_id)
+    daily_limit = limits['daily_limit']
+
+    if user_id not in agent_usage or agent_usage[user_id]['date'] != today:
+        # New day or new user
+        agent_usage[user_id] = {'date': today, 'count': 0}
+
+    usage = agent_usage[user_id]
+    remaining = daily_limit - usage['count']
+
+    if usage['count'] >= daily_limit:
+        return False, 0
+
+    return True, remaining
+
+
+def record_agent_usage(user_id: str):
+    """Record an /agent request for rate limiting."""
+    from datetime import date
+    today = date.today().isoformat()
+    user_id = str(user_id)
+
+    if user_id not in agent_usage or agent_usage[user_id]['date'] != today:
+        agent_usage[user_id] = {'date': today, 'count': 0}
+
+    agent_usage[user_id]['count'] += 1
+
+
+def get_agent_usage(user_id: str) -> tuple[int, int]:
+    """Get current usage for a user.
+
+    Returns:
+        (used, limit): Number used today and daily limit
+    """
+    from datetime import date
+    today = date.today().isoformat()
+    user_id = str(user_id)
+
+    # Get per-user daily limit
+    limits = get_agent_limits(user_id)
+    daily_limit = limits['daily_limit']
+
+    if user_id not in agent_usage or agent_usage[user_id]['date'] != today:
+        return 0, daily_limit
+
+    return agent_usage[user_id]['count'], daily_limit
+
 
 def mask_api_key(key: str) -> str:
     """Mask an API key for display, showing only first 4 and last 4 characters."""

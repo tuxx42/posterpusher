@@ -70,7 +70,10 @@ from config import (
     CONFIG_FILE, load_config, save_config, mask_api_key,
     set_api_key, delete_api_key, get_config_data,
     subscribed_chats, theft_alert_chats, admin_chat_ids,
-    approved_users, pending_requests, alerted_transactions, alerted_expenses
+    approved_users, pending_requests, alerted_transactions, alerted_expenses,
+    check_agent_rate_limit, record_agent_usage, get_agent_usage,
+    get_agent_limits, set_agent_limit,
+    agent_conversations, AGENT_HISTORY_LIMIT
 )
 
 # Import agent module (optional dependency)
@@ -1079,9 +1082,9 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Error resetting config: {e}")
 
 
-@require_auth
+@require_admin
 async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /agent command - AI agent to query POS data."""
+    """Handle /agent command - AI agent to query POS data (admin only)."""
     if not AGENT_AVAILABLE:
         await update.message.reply_text(
             "The AI agent is not available.\n\n"
@@ -1109,36 +1112,125 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
+    # Use user_id for per-user conversation history and rate limiting
+    user_id = str(update.effective_user.id)
+    chat_id = str(update.effective_chat.id)
+
+    # Handle /agent limit <user_id> <key> <value> - admin command to set per-user limits
+    if context.args and context.args[0].lower() == "limit":
+        if len(context.args) != 4:
+            await update.message.reply_text(
+                "Usage: <code>/agent limit &lt;user_id&gt; &lt;key&gt; &lt;value&gt;</code>\n\n"
+                "Keys:\n"
+                "• daily_limit - Max requests per day\n"
+                "• max_iterations - Max tool iterations per request\n\n"
+                "Examples:\n"
+                "• /agent limit 123456 daily_limit 10\n"
+                "• /agent limit 123456 max_iterations 3",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        target_user_id = context.args[1]
+        limit_key = context.args[2].lower()
+        try:
+            limit_value = int(context.args[3])
+        except ValueError:
+            await update.message.reply_text(
+                "Error: value must be an integer.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        if set_agent_limit(target_user_id, limit_key, limit_value):
+            limits = get_agent_limits(target_user_id)
+            await update.message.reply_text(
+                f"Updated limits for user {target_user_id}:\n"
+                f"• daily_limit: {limits['daily_limit']}\n"
+                f"• max_iterations: {limits['max_iterations']}",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                f"Error: invalid key '{limit_key}'. Valid keys: daily_limit, max_iterations",
+                parse_mode=ParseMode.HTML
+            )
+        return
+
+    # Handle /agent clear - reset conversation history
+    if context.args and context.args[0].lower() == "clear":
+        if user_id in agent_conversations:
+            del agent_conversations[user_id]
+        await update.message.reply_text(
+            "Conversation history cleared.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Get per-user limits
+    user_limits = get_agent_limits(user_id)
+
+    # Check rate limit
+    allowed, remaining = check_agent_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(
+            f"Daily limit reached ({user_limits['daily_limit']} requests/day).\n"
+            "Try again tomorrow.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
     if not context.args:
+        used, limit = get_agent_usage(user_id)
         await update.message.reply_text(
             "Usage: <code>/agent &lt;your question&gt;</code>\n\n"
             "Examples:\n"
             "• /agent What were total sales today?\n"
             "• /agent Which products sold the most this week?\n"
             "• /agent What's the current stock level of beer?\n"
-            "• /agent Show me expenses for this month",
+            "• /agent Show me expenses for this month\n"
+            "• /agent clear - Reset conversation history\n\n"
+            f"<i>Daily usage: {used}/{limit}</i>",
             parse_mode=ParseMode.HTML
         )
         return
 
     prompt = " ".join(context.args)
 
+    # Record usage before making request
+    record_agent_usage(user_id)
+    used, limit = get_agent_usage(user_id)
+
     # Send "thinking" message
     thinking_msg = await update.message.reply_text("🤔 Thinking...")
 
     try:
-        response = await run_agent(prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN)
+        # Get existing conversation history for this user
+        history = agent_conversations.get(user_id, [])
+
+        response, updated_history = await run_agent(
+            prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN,
+            history=history, max_iterations=user_limits['max_iterations']
+        )
+
+        # Store updated history (already trimmed to last 10 messages)
+        agent_conversations[user_id] = updated_history
 
         # Delete thinking message
         await thinking_msg.delete()
 
+        # Add usage footer
+        usage_footer = f"\n\n<i>({used}/{limit} today)</i>"
+
         # Handle long responses (Telegram limit is 4096 chars)
-        if len(response) <= 4000:
-            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
+        if len(response) + len(usage_footer) <= 4000:
+            await update.message.reply_text(response + usage_footer, parse_mode=ParseMode.HTML)
         else:
             # Split into multiple messages
             chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
-            for chunk in chunks:
+            for i, chunk in enumerate(chunks):
+                if i == len(chunks) - 1:  # Last chunk
+                    chunk += usage_footer
                 await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
     except Exception as e:

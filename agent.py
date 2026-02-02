@@ -230,8 +230,20 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str:
         return json.dumps({"error": f"Tool execution failed: {str(e)}"})
 
 
-async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str) -> str:
-    """Run the Anthropic agent with tool calling."""
+async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, model: str = "claude-sonnet-4-20250514", history: list = None, max_iterations: int = 5) -> tuple[str, list]:
+    """Run the Anthropic agent with tool calling.
+
+    Args:
+        prompt: The user's question
+        anthropic_api_key: Anthropic API key
+        poster_token: Poster POS API token
+        model: Model to use
+        history: Previous conversation messages for context
+        max_iterations: Maximum tool use iterations (default 5)
+
+    Returns:
+        Tuple of (response_text, updated_messages[-10:])
+    """
     import anthropic
 
     client = anthropic.Anthropic(api_key=anthropic_api_key)
@@ -245,17 +257,18 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str) -> s
         yesterday_yyyymmdd=yesterday.strftime('%Y%m%d')
     )
 
-    messages = [{"role": "user", "content": prompt}]
+    # Start with history (if provided) + new user message
+    messages = list(history) if history else []
+    messages.append({"role": "user", "content": prompt})
 
-    max_iterations = 10
     iteration = 0
 
     while iteration < max_iterations:
         iteration += 1
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
+            model=model,
+            max_tokens=2048,  # Reduced to limit costs
             system=system_prompt,
             tools=TOOLS,
             messages=messages
@@ -291,6 +304,10 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str) -> s
                 if hasattr(block, "text"):
                     final_text += block.text
 
-            return final_text if final_text else "No response generated."
+            # Add assistant response to messages for history
+            messages.append({"role": "assistant", "content": final_text})
 
-    return "Agent reached maximum iterations without completing."
+            response_text = final_text if final_text else "No response generated."
+            return response_text, messages[-10:]
+
+    return "Agent reached maximum iterations without completing.", messages[-10:]
