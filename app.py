@@ -71,6 +71,7 @@ from config import (
     set_api_key, delete_api_key, get_config_data,
     subscribed_chats, theft_alert_chats, admin_chat_ids,
     approved_users, pending_requests, alerted_transactions, alerted_expenses,
+    last_seen_transaction_id, last_seen_void_id, last_cash_balance,
     check_agent_rate_limit, record_agent_usage, get_agent_usage,
     get_agent_limits, set_agent_limit,
     agent_conversations, AGENT_HISTORY_LIMIT,
