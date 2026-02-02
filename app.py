@@ -63,7 +63,15 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 POSTER_ACCESS_TOKEN = os.environ.get('POSTER_ACCESS_TOKEN')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 POSTER_API_URL = "https://joinposter.com/api"
+
+# Import agent module (optional dependency)
+try:
+    from agent import run_agent
+    AGENT_AVAILABLE = True
+except ImportError:
+    AGENT_AVAILABLE = False
 
 # Thailand timezone
 THAI_TZ = pytz.timezone('Asia/Bangkok')
@@ -104,6 +112,7 @@ def load_config():
     global subscribed_chats, theft_alert_chats, admin_chat_ids, approved_users, pending_requests
     global last_seen_transaction_id, last_seen_void_id, last_cash_balance
     global alerted_transactions, alerted_expenses
+    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
@@ -124,6 +133,11 @@ def load_config():
                 last_cash_balance = config.get('last_cash_balance')
                 alerted_transactions = set(config.get('alerted_transactions', []))
                 alerted_expenses = set(config.get('alerted_expenses', []))
+                # Load API keys (config file overrides env vars)
+                if config.get('ANTHROPIC_API_KEY'):
+                    ANTHROPIC_API_KEY = config.get('ANTHROPIC_API_KEY')
+                if config.get('POSTER_ACCESS_TOKEN'):
+                    POSTER_ACCESS_TOKEN = config.get('POSTER_ACCESS_TOKEN')
                 logger.info(f"Loaded config: {len(subscribed_chats)} subscribed, {len(theft_alert_chats)} alert chats, {len(admin_chat_ids)} admins")
                 logger.info(f"Loaded theft state: {len(alerted_transactions)} alerted txns, {len(alerted_expenses)} alerted expenses")
     except Exception as e:
@@ -133,6 +147,15 @@ def load_config():
 def save_config():
     """Save state to config file."""
     try:
+        # Read existing config to preserve API keys
+        existing_config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    existing_config = json.load(f)
+            except Exception:
+                pass
+
         config = {
             'subscribed_chats': list(subscribed_chats),
             'theft_alert_chats': list(theft_alert_chats),
@@ -146,6 +169,11 @@ def save_config():
             'alerted_transactions': list(alerted_transactions),
             'alerted_expenses': list(alerted_expenses)
         }
+        # Preserve API keys from existing config
+        if existing_config.get('ANTHROPIC_API_KEY'):
+            config['ANTHROPIC_API_KEY'] = existing_config['ANTHROPIC_API_KEY']
+        if existing_config.get('POSTER_ACCESS_TOKEN'):
+            config['POSTER_ACCESS_TOKEN'] = existing_config['POSTER_ACCESS_TOKEN']
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
         logger.info("Config saved")
@@ -562,6 +590,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>🚨 Security:</b>\n"
         "/alerts - Enable theft detection\n"
         "/alerts_off - Disable theft alerts\n\n"
+        "<b>🤖 AI Assistant:</b>\n"
+        "/agent &lt;question&gt; - Ask AI about your data\n\n"
     )
 
     # Add admin commands if user is admin
@@ -955,9 +985,61 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"User demoted from admin: {target_chat_id}")
 
 
+def mask_api_key(key: str) -> str:
+    """Mask an API key for display, showing only first 4 and last 4 characters."""
+    if not key or len(key) < 12:
+        return "****"
+    return f"{key[:4]}...{key[-4:]}"
+
+
 @require_admin
 async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /config command - show current configuration."""
+    """Handle /config command - show or set configuration."""
+    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN
+
+    # Handle /config set <VAR> <VALUE>
+    if context.args and len(context.args) >= 3 and context.args[0].lower() == "set":
+        var_name = context.args[1].upper()
+        var_value = " ".join(context.args[2:])
+
+        allowed_vars = ["ANTHROPIC_API_KEY", "POSTER_ACCESS_TOKEN"]
+        if var_name not in allowed_vars:
+            await update.message.reply_text(
+                f"Unknown variable: {var_name}\n\n"
+                f"Allowed variables:\n"
+                f"• ANTHROPIC_API_KEY\n"
+                f"• POSTER_ACCESS_TOKEN"
+            )
+            return
+
+        # Load existing config
+        config_data = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    config_data = json.load(f)
+            except Exception:
+                pass
+
+        # Update the variable
+        config_data[var_name] = var_value
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config_data, f, indent=2)
+
+        # Update global variable
+        if var_name == "ANTHROPIC_API_KEY":
+            ANTHROPIC_API_KEY = var_value
+        elif var_name == "POSTER_ACCESS_TOKEN":
+            POSTER_ACCESS_TOKEN = var_value
+
+        await update.message.reply_text(
+            f"✅ <b>{var_name}</b> has been set.\n"
+            f"Value: <code>{mask_api_key(var_value)}</code>",
+            parse_mode=ParseMode.HTML
+        )
+        logger.info(f"Config variable {var_name} updated by admin")
+        return
+
     try:
         if not os.path.exists(CONFIG_FILE):
             await update.message.reply_text("No configuration file exists yet.")
@@ -968,6 +1050,13 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # Format the config nicely
         message = "⚙️ <b>Bot Configuration</b>\n\n"
+
+        # API Keys section
+        message += "<b>API Keys:</b>\n"
+        anthropic_key = config_data.get('ANTHROPIC_API_KEY') or ANTHROPIC_API_KEY
+        poster_key = config_data.get('POSTER_ACCESS_TOKEN') or POSTER_ACCESS_TOKEN
+        message += f"  • ANTHROPIC_API_KEY: <code>{mask_api_key(anthropic_key) if anthropic_key else 'Not set'}</code>\n"
+        message += f"  • POSTER_ACCESS_TOKEN: <code>{mask_api_key(poster_key) if poster_key else 'Not set'}</code>\n\n"
 
         # Admin info - handle both old and new format
         admin_ids = set(config_data.get('admin_chat_ids', []))
@@ -1002,13 +1091,19 @@ async def config(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         alerts = config_data.get('theft_alert_chats', [])
         message += f"<b>Theft Alerts:</b> {len(alerts)} chat(s)\n"
 
-        # Config file path
-        message += f"\n<i>File: {CONFIG_FILE}</i>"
+        # Config file path and usage hint
+        message += f"\n<i>File: {CONFIG_FILE}</i>\n"
+        message += "<i>Use /config set VAR VALUE to set API keys</i>"
 
         await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
-        # Send raw JSON as a separate message
-        raw_json = json.dumps(config_data, indent=2, ensure_ascii=False)
+        # Send raw JSON as a separate message (with API keys masked)
+        display_config = config_data.copy()
+        if display_config.get('ANTHROPIC_API_KEY'):
+            display_config['ANTHROPIC_API_KEY'] = mask_api_key(display_config['ANTHROPIC_API_KEY'])
+        if display_config.get('POSTER_ACCESS_TOKEN'):
+            display_config['POSTER_ACCESS_TOKEN'] = mask_api_key(display_config['POSTER_ACCESS_TOKEN'])
+        raw_json = json.dumps(display_config, indent=2, ensure_ascii=False)
         # Telegram message limit is 4096 chars, truncate if needed
         if len(raw_json) > 4000:
             raw_json = raw_json[:4000] + "\n... (truncated)"
@@ -1073,6 +1168,73 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.error(f"Error resetting config: {e}")
         await update.message.reply_text(f"Error resetting config: {e}")
+
+
+@require_auth
+async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /agent command - AI agent to query POS data."""
+    if not AGENT_AVAILABLE:
+        await update.message.reply_text(
+            "The AI agent is not available.\n\n"
+            "To enable it, install the anthropic package:\n"
+            "<code>pip install anthropic</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not ANTHROPIC_API_KEY:
+        await update.message.reply_text(
+            "ANTHROPIC_API_KEY is not configured.\n\n"
+            "Ask an admin to set it with:\n"
+            "<code>/config set ANTHROPIC_API_KEY sk-...</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not POSTER_ACCESS_TOKEN:
+        await update.message.reply_text(
+            "POSTER_ACCESS_TOKEN is not configured.\n\n"
+            "Ask an admin to set it with:\n"
+            "<code>/config set POSTER_ACCESS_TOKEN ...</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: <code>/agent &lt;your question&gt;</code>\n\n"
+            "Examples:\n"
+            "• /agent What were total sales today?\n"
+            "• /agent Which products sold the most this week?\n"
+            "• /agent What's the current stock level of beer?\n"
+            "• /agent Show me expenses for this month",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    prompt = " ".join(context.args)
+
+    # Send "thinking" message
+    thinking_msg = await update.message.reply_text("🤔 Thinking...")
+
+    try:
+        response = await run_agent(prompt, ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN)
+
+        # Delete thinking message
+        await thinking_msg.delete()
+
+        # Handle long responses (Telegram limit is 4096 chars)
+        if len(response) <= 4000:
+            await update.message.reply_text(response)
+        else:
+            # Split into multiple messages
+            chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
+            for chunk in chunks:
+                await update.message.reply_text(chunk)
+
+    except Exception as e:
+        logger.error(f"Agent error: {e}")
+        await thinking_msg.edit_text(f"Error: {str(e)}")
 
 
 @require_admin
@@ -2689,6 +2851,7 @@ def main():
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
     application.add_handler(CommandHandler("alerts", alerts_on))
     application.add_handler(CommandHandler("alerts_off", alerts_off))
+    application.add_handler(CommandHandler("agent", agent))
 
     # Set up scheduler for background jobs
     scheduler = AsyncIOScheduler(timezone=THAI_TZ)
