@@ -60,6 +60,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Silence noisy third-party loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 POSTER_API_URL = "https://joinposter.com/api"
@@ -119,6 +124,10 @@ def require_auth(func):
             else:
                 await update.message.reply_text("Access required. Send /request to request access.")
             return
+        user = update.effective_user
+        username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
+        cmd = update.message.text.split()[0] if update.message and update.message.text else func.__name__
+        logger.info(f"Command {cmd} from {username}")
         return await func(update, context)
     return wrapper
 
@@ -134,6 +143,10 @@ def require_admin(func):
         if chat_id not in admin_chat_ids:
             await update.message.reply_text("Admin privileges required.")
             return
+        user = update.effective_user
+        username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
+        cmd = update.message.text.split()[0] if update.message and update.message.text else func.__name__
+        logger.info(f"Command {cmd} from {username} (admin)")
         return await func(update, context)
     return wrapper
 
