@@ -44,7 +44,7 @@ IMPORTANT - Use Telegram HTML formatting only:
   Beer: 24 bottles
   Wine: 12 bottles
 
-When presenting numerical data, consider using the plot_graph tool to create visualizations:
+When presenting numerical data, ALWAYS use the plot_graph tool to create visualizations:
 - Use pie charts for showing proportions or market share
 - Use bar charts for comparing categories or showing rankings
 - Use line charts for showing trends over time
