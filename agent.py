@@ -31,6 +31,7 @@ Guidelines:
 - Summarize data clearly with key metrics and insights
 - Currency values from the API are in satang (1/100 of baht), divide by 100 for display
 - Format currency as Thai Baht (฿)
+- Timestamps from the API are already in local time - do NOT convert or assume UTC
 - Keep responses concise but informative
 
 IMPORTANT - Use Telegram HTML formatting only:
