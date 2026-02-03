@@ -50,6 +50,13 @@ When presenting numerical data, ALWAYS use the plot_graph tool to create visuali
 - Use line charts for showing trends over time
 - Use horizontal bar charts for ranked lists with long labels
 Always provide a text summary alongside any chart.
+
+IMPORTANT - Optimize data requests to avoid running out of context:
+- ALWAYS use the 'fields' parameter to request only the fields you need for your analysis
+- This is especially critical for large date ranges or queries that may return many records
+- Example: get_transactions with fields: ["sum", "total_profit", "date_close_date"]
+- For simple totals, you may only need 1-2 fields
+- For detailed breakdowns, request only the fields relevant to the breakdown
 """
 
 TOOLS = [
@@ -66,6 +73,11 @@ TOOLS = [
                 "date_to": {
                     "type": "string",
                     "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Fields to include. Available: transaction_id (unique ID), sum (total amount in satang), total_profit (profit in satang), payed_cash (cash paid), payed_card (card paid), date_close_date (closing timestamp YYYY-MM-DD HH:MM:SS), status (2=closed)"
                 }
             },
             "required": ["date_from"]
@@ -84,6 +96,11 @@ TOOLS = [
                 "date_to": {
                     "type": "string",
                     "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Fields to include. Available: product_id (unique ID), product_name (name), payed_sum (revenue in satang), product_profit (profit in satang), num (quantity sold)"
                 }
             },
             "required": ["date_from"]
@@ -94,7 +111,13 @@ TOOLS = [
         "description": "Get current inventory/stock levels for all ingredients and products.",
         "input_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Fields to include. Available: ingredient_id (unique ID), ingredient_name (name), storage_ingredient_left (current stock quantity), storage_ingredient_unit (unit of measurement)"
+                }
+            },
             "required": []
         }
     },
@@ -111,6 +134,11 @@ TOOLS = [
                 "date_to": {
                     "type": "string",
                     "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Fields to include. Available: ingredient_id (unique ID), ingredient_name (name), write_offs (quantity used), start (opening balance), income (received), end (closing balance)"
                 }
             },
             "required": ["date_from"]
@@ -129,6 +157,11 @@ TOOLS = [
                 "date_to": {
                     "type": "string",
                     "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Fields to include. Available: transaction_id (unique ID), amount (in satang, negative=expense), comment (description), category_name (expense category), date (YYYY-MM-DD HH:MM:SS)"
                 }
             },
             "required": ["date_from"]
@@ -139,7 +172,13 @@ TOOLS = [
         "description": "Get cash register shift data including opening/closing amounts.",
         "input_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Fields to include. Available: shift_id (unique ID), date_start (shift open time), date_end (shift close time), cash_start (opening cash), cash_end (closing cash)"
+                }
+            },
             "required": []
         }
     },
@@ -152,6 +191,11 @@ TOOLS = [
                 "transaction_id": {
                     "type": "string",
                     "description": "The transaction ID to get products for"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Fields to include. Available: product_id (unique ID), product_name (name), num (quantity), payed_sum (line total in satang)"
                 }
             },
             "required": ["transaction_id"]
@@ -241,6 +285,28 @@ def _trim_history(messages: list, max_messages: int = 10) -> list:
             trimmed = trimmed[1:]
 
     return trimmed
+
+
+def _filter_fields(data, fields: list[str] | None):
+    """Filter API response to only include specified fields.
+
+    Args:
+        data: API response data (list or dict)
+        fields: List of field names to keep, or None for all fields
+
+    Returns:
+        Filtered data with only requested fields
+    """
+    if fields is None:
+        return data
+
+    if isinstance(data, list):
+        return [_filter_fields(item, fields) for item in data]
+
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k in fields}
+
+    return data
 
 
 # Whitelist of allowed read-only tools
@@ -345,6 +411,12 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | t
 
         # Return the response data
         result = data.get("response", data)
+
+        # Apply field filtering if specified
+        fields = tool_input.get("fields")
+        if fields:
+            result = _filter_fields(result, fields)
+
         # Limit response size to avoid token limits
         result_str = json.dumps(result, ensure_ascii=False)
         if len(result_str) > 50000:
