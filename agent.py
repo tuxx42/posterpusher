@@ -306,6 +306,51 @@ def _trim_history(messages: list, max_messages: int = 10) -> list:
     return _clean_orphaned_messages(trimmed)
 
 
+# Timestamp fields that need timezone correction
+TIMESTAMP_FIELDS = {'date_close_date', 'date', 'date_start', 'date_end'}
+TIMESTAMP_OFFSET_HOURS = 4  # Poster API returns timestamps 4 hours behind local time
+
+
+def _adjust_timestamp(value: str) -> str:
+    """Add timezone offset to a timestamp string.
+
+    Args:
+        value: Timestamp in 'YYYY-MM-DD HH:MM:SS' format
+
+    Returns:
+        Adjusted timestamp string
+    """
+    try:
+        dt = datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+        dt = dt + timedelta(hours=TIMESTAMP_OFFSET_HOURS)
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+    except (ValueError, TypeError):
+        return value
+
+
+def _adjust_timestamps(data):
+    """Recursively adjust timestamps in API response data.
+
+    Args:
+        data: API response data (list or dict)
+
+    Returns:
+        Data with adjusted timestamps
+    """
+    if isinstance(data, list):
+        return [_adjust_timestamps(item) for item in data]
+
+    if isinstance(data, dict):
+        return {
+            k: _adjust_timestamp(v) if k in TIMESTAMP_FIELDS and isinstance(v, str)
+            else _adjust_timestamps(v) if isinstance(v, (dict, list))
+            else v
+            for k, v in data.items()
+        }
+
+    return data
+
+
 def _filter_fields(data, fields: list[str] | None):
     """Filter API response to only include specified fields.
 
@@ -430,6 +475,9 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | t
 
         # Return the response data
         result = data.get("response", data)
+
+        # Adjust timestamps to correct for Poster API timezone offset
+        result = _adjust_timestamps(result)
 
         # Apply field filtering if specified
         fields = tool_input.get("fields")
