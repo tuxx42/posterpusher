@@ -252,6 +252,45 @@ TOOLS = [
 ]
 
 
+def _clean_orphaned_messages(messages: list) -> list:
+    """Remove orphaned tool_use/tool_result messages from the start of history.
+
+    The API requires that every tool_result has a corresponding tool_use in the
+    previous assistant message. This function removes any orphaned messages.
+    """
+    cleaned = list(messages)
+
+    # Keep removing orphaned messages from the start until we have a valid sequence
+    while cleaned:
+        first_msg = cleaned[0]
+        should_remove = False
+
+        # Check if first message is a user message with tool_results (orphaned)
+        if first_msg.get("role") == "user":
+            content = first_msg.get("content", [])
+            if isinstance(content, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for block in content
+            ):
+                should_remove = True
+
+        # Check if first message is assistant with tool_use (orphaned without user prompt)
+        elif first_msg.get("role") == "assistant":
+            content = first_msg.get("content", [])
+            if isinstance(content, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_use"
+                for block in content
+            ):
+                should_remove = True
+
+        if should_remove:
+            cleaned = cleaned[1:]
+        else:
+            break
+
+    return cleaned
+
+
 def _trim_history(messages: list, max_messages: int = 10) -> list:
     """Trim message history while keeping tool_use/tool_result pairs intact.
 
@@ -261,30 +300,9 @@ def _trim_history(messages: list, max_messages: int = 10) -> list:
     if len(messages) <= max_messages:
         return messages
 
-    # Take the last N messages
+    # Take the last N messages, then clean any orphaned messages
     trimmed = messages[-max_messages:]
-
-    # Check if the first message contains tool_results (which would be orphaned)
-    first_msg = trimmed[0]
-    if first_msg.get("role") == "user":
-        content = first_msg.get("content", [])
-        # Check if content is a list with tool_result blocks
-        if isinstance(content, list) and any(
-            isinstance(block, dict) and block.get("type") == "tool_result"
-            for block in content
-        ):
-            # This is a tool_result without its tool_use - skip it
-            trimmed = trimmed[1:]
-
-    # Also check if first message is assistant with tool_use (orphaned without user prompt)
-    if trimmed and trimmed[0].get("role") == "assistant":
-        content = trimmed[0].get("content", [])
-        # If it's a list (tool_use blocks), it needs a preceding user message
-        if isinstance(content, list):
-            # Skip this orphaned assistant message
-            trimmed = trimmed[1:]
-
-    return trimmed
+    return _clean_orphaned_messages(trimmed)
 
 
 def _filter_fields(data, fields: list[str] | None):
@@ -459,7 +477,8 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
     )
 
     # Start with history (if provided) + new user message
-    messages = list(history) if history else []
+    # Validate incoming history to remove any orphaned tool_use/tool_result pairs
+    messages = _clean_orphaned_messages(list(history)) if history else []
     messages.append({"role": "user", "content": prompt})
 
     iteration = 0
