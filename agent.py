@@ -208,6 +208,41 @@ TOOLS = [
 ]
 
 
+def _trim_history(messages: list, max_messages: int = 10) -> list:
+    """Trim message history while keeping tool_use/tool_result pairs intact.
+
+    The API requires that every tool_result has a corresponding tool_use in the
+    previous assistant message. Naive trimming can break this pairing.
+    """
+    if len(messages) <= max_messages:
+        return messages
+
+    # Take the last N messages
+    trimmed = messages[-max_messages:]
+
+    # Check if the first message contains tool_results (which would be orphaned)
+    first_msg = trimmed[0]
+    if first_msg.get("role") == "user":
+        content = first_msg.get("content", [])
+        # Check if content is a list with tool_result blocks
+        if isinstance(content, list) and any(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in content
+        ):
+            # This is a tool_result without its tool_use - skip it
+            trimmed = trimmed[1:]
+
+    # Also check if first message is assistant with tool_use (orphaned without user prompt)
+    if trimmed and trimmed[0].get("role") == "assistant":
+        content = trimmed[0].get("content", [])
+        # If it's a list (tool_use blocks), it needs a preceding user message
+        if isinstance(content, list):
+            # Skip this orphaned assistant message
+            trimmed = trimmed[1:]
+
+    return trimmed
+
+
 # Whitelist of allowed read-only tools
 ALLOWED_TOOLS = {
     "get_transactions",
@@ -334,7 +369,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
         max_iterations: Maximum tool use iterations (default 5)
 
     Returns:
-        Tuple of (response_text, updated_messages[-10:], charts)
+        Tuple of (response_text, trimmed_history, charts)
         where charts is a list of BytesIO buffers containing generated chart images
     """
     import anthropic
@@ -414,7 +449,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
             messages.append({"role": "assistant", "content": final_text})
 
             response_text = final_text if final_text else "No response generated."
-            return response_text, messages[-10:], charts
+            return response_text, _trim_history(messages), charts
 
     # Reached max iterations - ask the model to summarize what it found
     messages.append({
@@ -437,8 +472,8 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
 
         if summary_text:
             messages.append({"role": "assistant", "content": summary_text})
-            return summary_text, messages[-10:], charts
+            return summary_text, _trim_history(messages), charts
     except Exception:
         pass
 
-    return "Agent reached maximum iterations without completing.", messages[-10:], charts
+    return "Agent reached maximum iterations without completing.", _trim_history(messages), charts
