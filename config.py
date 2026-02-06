@@ -280,7 +280,7 @@ def save_config():
             config['LOG_LEVEL'] = existing_config['LOG_LEVEL']
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
-        logger.info("Config saved")
+        logger.debug("Config saved")
     except Exception as e:
         logger.error(f"Failed to save config: {e}")
 
