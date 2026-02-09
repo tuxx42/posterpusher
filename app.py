@@ -245,6 +245,16 @@ def format_currency(amount_in_cents):
 BUSINESS_DAY_CUTOFF_HOUR = 2
 
 
+def adjust_poster_time(timestamp_str):
+    """Add 4-hour offset to Poster API timestamp (API returns 4h behind local time)."""
+    try:
+        dt = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+        dt = dt + timedelta(hours=4)
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+    except (ValueError, TypeError):
+        return timestamp_str
+
+
 def get_business_date():
     """Get the current business date.
 
@@ -1336,7 +1346,7 @@ async def sales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         payed_cash = int(txn.get('payed_cash', 0) or 0)
         payed_card = int(txn.get('payed_card', 0) or 0)
         table_name = txn.get('table_name', '-')
-        close_time = txn.get('date_close_date', '')
+        close_time = adjust_poster_time(txn.get('date_close_date', ''))
 
         # Format time
         time_str = close_time.split(' ')[1][:5] if ' ' in close_time else '-'
@@ -2092,8 +2102,8 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     latest_shift = shifts[0]
 
-    shift_start = latest_shift.get('date_start', 'Unknown')
-    shift_end = latest_shift.get('date_end', '')
+    shift_start = adjust_poster_time(latest_shift.get('date_start', 'Unknown'))
+    shift_end = adjust_poster_time(latest_shift.get('date_end', ''))
     amount_start = int(latest_shift.get('amount_start', 0) or 0)
     amount_end = int(latest_shift.get('amount_end', 0) or 0)
     cash_sales = int(latest_shift.get('amount_sell_cash', 0) or 0)
