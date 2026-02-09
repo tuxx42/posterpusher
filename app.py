@@ -2541,7 +2541,7 @@ async def check_new_transactions():
             return
 
         # Filter only closed transactions
-        transactions = list(filter(lambda x: x.get('status', '') == 2, transactions))
+        transactions = list(filter(lambda x: str(x.get('status', '')) == '2', transactions))
         # Sort by transaction_id ascending to process in order
         transactions.sort(key=lambda x: int(x.get('transaction_id', 0) or 0))
 
