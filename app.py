@@ -2128,7 +2128,8 @@ async def cash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"<b>Shift Details:</b>\n"
         f"• Opening: {format_currency(amount_start)}\n"
         f"• Cash Sales: +{format_currency(cash_sales)}\n"
-        f"• Cash Out: -{format_currency(cash_out)}"
+        f"• Cash Out: -{format_currency(cash_out)}\n"
+        f"• <b>Net: {format_currency(cash_sales - cash_out)}</b>"
     )
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
