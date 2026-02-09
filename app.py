@@ -2595,6 +2595,8 @@ async def check_new_transactions():
                 payed_cash = int(txn.get('payed_cash', 0) or 0)
                 payed_card = int(txn.get('payed_card', 0) or 0)
                 table_name = txn.get('table_name', '')
+                close_time = adjust_poster_time(txn.get('date_close_date', ''))
+                time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
 
                 if payed_card > 0 and payed_cash > 0:
                     payment = "💳+💵"
@@ -2622,6 +2624,7 @@ async def check_new_transactions():
 
                 message = (
                     f"💰 <b>New Sale!</b>\n\n"
+                    f"<b>Time:</b> {time_str}\n"
                     f"<b>Amount:</b> {format_currency(total)}\n"
                     f"<b>Profit:</b> {format_currency(profit)}\n"
                     f"<b>Payment:</b> {payment}\n"
