@@ -23,7 +23,8 @@ subscribed_chats = set()
 theft_alert_chats = set()
 
 # Theft detection state
-last_seen_transaction_id = None
+notified_transaction_ids = set()
+notified_transaction_date = None
 last_seen_void_id = None
 last_cash_balance = None
 last_alerted_transaction_id = 0
@@ -191,7 +192,7 @@ def mask_api_key(key: str) -> str:
 
 def load_config():
     """Load persisted state from config file."""
-    global last_seen_transaction_id, last_seen_void_id, last_cash_balance
+    global notified_transaction_ids, notified_transaction_date, last_seen_void_id, last_cash_balance
     global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN, LOG_LEVEL
 
     try:
@@ -222,7 +223,8 @@ def load_config():
                 pending_requests.update({str(k): v for k, v in cfg.get('pending_requests', {}).items()})
 
                 # Load theft detection state
-                last_seen_transaction_id = cfg.get('last_seen_transaction_id')
+                notified_transaction_ids = set(cfg.get('notified_transaction_ids', []))
+                notified_transaction_date = cfg.get('notified_transaction_date')
                 last_seen_void_id = cfg.get('last_seen_void_id')
                 last_cash_balance = cfg.get('last_cash_balance')
 
@@ -265,7 +267,8 @@ def save_config():
             'approved_users': approved_users,
             'pending_requests': pending_requests,
             # Theft detection state
-            'last_seen_transaction_id': last_seen_transaction_id,
+            'notified_transaction_ids': list(notified_transaction_ids),
+            'notified_transaction_date': notified_transaction_date,
             'last_seen_void_id': last_seen_void_id,
             'last_cash_balance': last_cash_balance,
             'last_alerted_transaction_id': last_alerted_transaction_id,

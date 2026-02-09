@@ -76,7 +76,7 @@ from config import (
     set_api_key, delete_api_key, get_config_data,
     subscribed_chats, theft_alert_chats, admin_chat_ids,
     approved_users, pending_requests, last_alerted_transaction_id, last_alerted_expense_id,
-    last_seen_transaction_id, last_seen_void_id, last_cash_balance,
+    notified_transaction_ids, notified_transaction_date, last_seen_void_id, last_cash_balance,
     check_agent_rate_limit, record_agent_usage, get_agent_usage,
     get_agent_limits, set_agent_limit,
     agent_conversations, AGENT_HISTORY_LIMIT,
@@ -1058,7 +1058,7 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /reset command - delete configuration and reset bot."""
     global admin_chat_ids, approved_users, pending_requests, subscribed_chats, theft_alert_chats
-    global last_seen_transaction_id, last_seen_void_id, last_cash_balance, last_alerted_transaction_id, last_alerted_expense_id
+    global notified_transaction_ids, notified_transaction_date, last_seen_void_id, last_cash_balance, last_alerted_transaction_id, last_alerted_expense_id
 
     # Check for confirmation argument
     if not context.args or context.args[0] != "CONFIRM":
@@ -1088,7 +1088,8 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         pending_requests = {}
         subscribed_chats = set()
         theft_alert_chats = set()
-        last_seen_transaction_id = None
+        notified_transaction_ids = set()
+        notified_transaction_date = None
         last_seen_void_id = None
         last_cash_balance = None
         last_alerted_transaction_id = 0
@@ -1292,9 +1293,9 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message += f"<b>Transaction ID:</b> {txn_id}\n"
         message += f"<pre>{json.dumps(txn, indent=2, ensure_ascii=False)[:1000]}</pre>\n\n"
 
-    # Also show last_seen_transaction_id
-    message += f"<b>last_seen_transaction_id:</b> {last_seen_transaction_id}\n"
-    message += f"<b>Type:</b> {type(last_seen_transaction_id).__name__}"
+    # Also show notified transaction set info
+    message += f"<b>notified_transaction_ids:</b> {len(notified_transaction_ids)} tracked\n"
+    message += f"<b>notified_transaction_date:</b> {notified_transaction_date}"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
@@ -2534,7 +2535,7 @@ async def check_theft_indicators():
 
 async def check_new_transactions():
     """Poll for new transactions and notify subscribed chats."""
-    global last_seen_transaction_id
+    global notified_transaction_ids, notified_transaction_date
 
     if not subscribed_chats:
         return
@@ -2543,6 +2544,16 @@ async def check_new_transactions():
         return
 
     try:
+        # Check for business date rollover — clear the set when the day changes
+        current_business_date = get_business_date().isoformat()
+        if notified_transaction_date != current_business_date:
+            notified_transaction_ids = set()
+            notified_transaction_date = current_business_date
+            config.notified_transaction_ids = notified_transaction_ids
+            config.notified_transaction_date = notified_transaction_date
+            save_config()
+            logger.info(f"Business date changed to {current_business_date}, cleared notified set")
+
         # Fetch today's transactions
         today_str = get_business_date().strftime('%Y%m%d')
         transactions = fetch_transactions(today_str)
@@ -2551,25 +2562,16 @@ async def check_new_transactions():
             logger.debug("No transactions found for today")
             return
 
-        # Filter only closed transactions
-        transactions = list(filter(lambda x: str(x.get('status', '')) == '2', transactions))
-        # Sort by transaction_id ascending to process in order
-        transactions.sort(key=lambda x: int(x.get('transaction_id', 0) or 0))
-
-        # Convert last seen to int for comparison
-        try:
-            last_seen_int = int(last_seen_transaction_id) if last_seen_transaction_id else 0
-        except (ValueError, TypeError):
-            logger.error(f"Invalid last_seen_transaction_id: {last_seen_transaction_id}, resetting to 0")
-            last_seen_int = 0
-
-        # First run - initialize to highest ID without sending notifications
-        if last_seen_transaction_id is None and transactions:
-            latest_id = int(transactions[-1].get('transaction_id', 0) or 0)
-            last_seen_transaction_id = latest_id
-            config.last_seen_transaction_id = last_seen_transaction_id
+        # First run — seed the set with all currently closed transaction IDs (don't spam)
+        if not notified_transaction_ids:
+            for txn in transactions:
+                status = str(txn.get('status', ''))
+                total = int(txn.get('sum', 0) or 0)
+                if status == '2' and total > 0:
+                    notified_transaction_ids.add(str(txn.get('transaction_id', '')))
+            config.notified_transaction_ids = notified_transaction_ids
             save_config()
-            logger.info(f"Initialized last_seen_transaction_id to {latest_id}")
+            logger.info(f"Seeded notified set with {len(notified_transaction_ids)} existing transactions")
             return
 
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -2577,88 +2579,86 @@ async def check_new_transactions():
         new_count = 0
 
         for txn in transactions:
-            txn_id = int(txn.get('transaction_id', 0) or 0)
-
-            # Skip already-seen transactions
-            if txn_id <= last_seen_int:
-                continue
-
-            # Only notify for closed transactions with actual sales
+            txn_id_str = str(txn.get('transaction_id', ''))
             status = str(txn.get('status', ''))
             total = int(txn.get('sum', 0) or 0)
 
-            if status == '2' and total > 0:
-                new_count += 1
-                # Debug: log raw transaction data
-                logger.debug(f"Raw transaction data for {txn_id}: {txn}")
-                profit = int(txn.get('total_profit', 0) or 0)
-                logger.debug(f"Parsed values - total: {total}, profit: {profit}")
-                payed_cash = int(txn.get('payed_cash', 0) or 0)
-                payed_card = int(txn.get('payed_card', 0) or 0)
-                table_name = txn.get('table_name', '')
-                close_time = adjust_poster_time(txn.get('date_close_date', ''))
-                time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
+            # Only notify for closed transactions with actual sales, not yet notified
+            if status != '2' or total <= 0 or txn_id_str in notified_transaction_ids:
+                continue
 
-                if payed_card > 0 and payed_cash > 0:
-                    payment = "💳+💵"
-                elif payed_card > 0:
-                    payment = "💳 Card"
-                else:
-                    payment = "💵 Cash"
+            new_count += 1
+            txn_id = int(txn.get('transaction_id', 0) or 0)
+            # Debug: log raw transaction data
+            logger.debug(f"Raw transaction data for {txn_id}: {txn}")
+            profit = int(txn.get('total_profit', 0) or 0)
+            logger.debug(f"Parsed values - total: {total}, profit: {profit}")
+            payed_cash = int(txn.get('payed_cash', 0) or 0)
+            payed_card = int(txn.get('payed_card', 0) or 0)
+            table_name = txn.get('table_name', '')
+            close_time = adjust_poster_time(txn.get('date_close_date', ''))
+            time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
 
-                # Fetch items sold in this transaction
-                items_str = ""
-                try:
-                    products = fetch_transaction_products(txn_id)
-                    if products:
-                        items_list = []
-                        for p in products:
-                            qty = float(p.get('num', 1))
-                            name = p.get('product_name', 'Unknown')
-                            if qty == 1:
-                                items_list.append(name)
-                            else:
-                                items_list.append(f"{qty:.0f}x {name}")
-                        items_str = "\n<b>Items:</b> " + ", ".join(items_list)
-                except Exception as e:
-                    logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
+            if payed_card > 0 and payed_cash > 0:
+                payment = "💳+💵"
+            elif payed_card > 0:
+                payment = "💳 Card"
+            else:
+                payment = "💵 Cash"
 
-                message = (
-                    f"💰 <b>New Sale!</b>\n\n"
-                    f"<b>Time:</b> {time_str}\n"
-                    f"<b>Amount:</b> {format_currency(total)}\n"
-                    f"<b>Profit:</b> {format_currency(profit)}\n"
-                    f"<b>Payment:</b> {payment}\n"
-                    f"<b>Table:</b> {table_name}"
-                    f"{items_str}"
-                )
-
-                for chat_id in subscribed_chats.copy():
-                    try:
-                        result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
-                        if result is None:
-                            logger.warning(f"Failed to send notification for txn {txn_id} to {chat_id}")
+            # Fetch items sold in this transaction
+            items_str = ""
+            try:
+                products = fetch_transaction_products(txn_id)
+                if products:
+                    items_list = []
+                    for p in products:
+                        qty = float(p.get('num', 1))
+                        name = p.get('product_name', 'Unknown')
+                        if qty == 1:
+                            items_list.append(name)
                         else:
-                            notifications_sent += 1
-                    except Conflict:
-                        logger.error("Bot conflict detected in check_new_transactions")
-                        return  # Stop, another instance is running
-                    except Exception as e:
-                        logger.error(f"Failed to send to {chat_id}: {e}")
-                        # Remove invalid chats
-                        if "chat not found" in str(e).lower() or "bot was blocked" in str(e).lower():
-                            subscribed_chats.discard(chat_id)
-                            save_config()
+                            items_list.append(f"{qty:.0f}x {name}")
+                    items_str = "\n<b>Items:</b> " + ", ".join(items_list)
+            except Exception as e:
+                logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
 
-            # Update after processing each transaction (sorted ascending)
-            last_seen_transaction_id = txn_id
-            config.last_seen_transaction_id = last_seen_transaction_id
+            message = (
+                f"💰 <b>New Sale!</b>\n\n"
+                f"<b>Time:</b> {time_str}\n"
+                f"<b>Amount:</b> {format_currency(total)}\n"
+                f"<b>Profit:</b> {format_currency(profit)}\n"
+                f"<b>Payment:</b> {payment}\n"
+                f"<b>Table:</b> {table_name}"
+                f"{items_str}"
+            )
+
+            for chat_id in subscribed_chats.copy():
+                try:
+                    result = await safe_send_message(bot, chat_id, message, parse_mode=ParseMode.HTML)
+                    if result is None:
+                        logger.warning(f"Failed to send notification for txn {txn_id} to {chat_id}")
+                    else:
+                        notifications_sent += 1
+                except Conflict:
+                    logger.error("Bot conflict detected in check_new_transactions")
+                    return  # Stop, another instance is running
+                except Exception as e:
+                    logger.error(f"Failed to send to {chat_id}: {e}")
+                    # Remove invalid chats
+                    if "chat not found" in str(e).lower() or "bot was blocked" in str(e).lower():
+                        subscribed_chats.discard(chat_id)
+                        save_config()
+
+            # Mark as notified after successful processing
+            notified_transaction_ids.add(txn_id_str)
+            config.notified_transaction_ids = notified_transaction_ids
             save_config()
 
         if new_count > 0:
             logger.info(f"Sent {notifications_sent} notifications for {new_count} new transactions")
         else:
-            logger.debug(f"No new transactions (last seen: {last_seen_int})")
+            logger.debug(f"No new transactions (notified set size: {len(notified_transaction_ids)})")
 
     except Conflict:
         logger.error("Bot conflict detected - another instance may be running")
@@ -2768,9 +2768,10 @@ async def cli_mode():
     load_config()
 
     # Sync theft detection state from config module
-    global last_seen_transaction_id, last_seen_void_id, last_cash_balance
+    global notified_transaction_ids, notified_transaction_date, last_seen_void_id, last_cash_balance
     global last_alerted_transaction_id, last_alerted_expense_id
-    last_seen_transaction_id = config.last_seen_transaction_id
+    notified_transaction_ids = config.notified_transaction_ids
+    notified_transaction_date = config.notified_transaction_date
     last_seen_void_id = config.last_seen_void_id
     last_cash_balance = config.last_cash_balance
     last_alerted_transaction_id = config.last_alerted_transaction_id
@@ -2864,9 +2865,10 @@ def main():
     load_config()
 
     # Sync theft detection state from config module
-    global last_seen_transaction_id, last_seen_void_id, last_cash_balance
+    global notified_transaction_ids, notified_transaction_date, last_seen_void_id, last_cash_balance
     global last_alerted_transaction_id, last_alerted_expense_id
-    last_seen_transaction_id = config.last_seen_transaction_id
+    notified_transaction_ids = config.notified_transaction_ids
+    notified_transaction_date = config.notified_transaction_date
     last_seen_void_id = config.last_seen_void_id
     last_cash_balance = config.last_cash_balance
     last_alerted_transaction_id = config.last_alerted_transaction_id
