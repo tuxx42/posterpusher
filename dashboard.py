@@ -586,6 +586,19 @@ async def page_summary(request: Request, period: str = "today"):
     daily = _build_daily_breakdown(closed)
     hourly = _build_hourly_breakdown(closed) if period == "today" else None
 
+    # Build expense-by-category pie chart data
+    from collections import defaultdict
+    expense_by_category = defaultdict(int)
+    for exp in expenses["expense_list"]:
+        cat = exp.get("category") or "Uncategorized"
+        expense_by_category[cat] += exp["amount"]
+    # Sort by amount descending
+    sorted_cats = sorted(expense_by_category.items(), key=lambda x: x[1], reverse=True)
+    expense_pie = {
+        "labels": [c[0] for c in sorted_cats],
+        "values": [c[1] for c in sorted_cats],
+    } if sorted_cats else None
+
     return templates.TemplateResponse("summary.html", {
         "request": request,
         "active_page": "summary",
@@ -596,6 +609,7 @@ async def page_summary(request: Request, period: str = "today"):
         "net_profit": summary["total_sales"] - expenses["total_expenses"],
         "daily_data": json.dumps(daily),
         "hourly_data": json.dumps(hourly) if hourly else "null",
+        "expense_pie_data": json.dumps(expense_pie) if expense_pie else "null",
         "format_currency": format_currency,
         "username": session["username"],
     })

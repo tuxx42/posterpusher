@@ -58,6 +58,11 @@
 </div>
 
 {% if expenses.expense_list %}
+<div class="card chart-container" style="max-width: 500px;">
+    <h6>Expenses by Category</h6>
+    <canvas id="expensePieChart"></canvas>
+</div>
+
 <div class="card">
     <h6>Expenses</h6>
     <table class="product-table sortable-table" id="expenses-table" role="grid">
@@ -88,6 +93,7 @@
 <script>
     const dailyData = {{ daily_data | safe }};
     const hourlyData = {{ hourly_data | safe }};
+    const expensePieData = {{ expense_pie_data | safe }};
 
     // Daily breakdown chart
     if (dailyData && dailyData.labels.length > 0) {
@@ -111,6 +117,11 @@
                 { label: 'Profit', data: profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
             ]);
         }
+    }
+
+    // Expense breakdown pie chart
+    if (expensePieData && expensePieData.labels.length > 0) {
+        renderPieChart('expensePieChart', expensePieData.labels, expensePieData.values.map(v => v / 100));
     }
 </script>
 {% endblock %}
