@@ -187,3 +187,48 @@ function initSalesWebSocket(url, onSale) {
 
     connect();
 }
+
+// ============================================================
+// Sortable tables
+// ============================================================
+
+(function() {
+    document.querySelectorAll('.sortable-table').forEach(function(table) {
+        const headers = table.querySelectorAll('th[data-sort]');
+        let currentSort = { col: null, asc: true };
+
+        headers.forEach(function(th, colIndex) {
+            th.style.cursor = 'pointer';
+            th.addEventListener('click', function() {
+                const key = th.dataset.sort;
+                const asc = currentSort.col === key ? !currentSort.asc : true;
+                currentSort = { col: key, asc: asc };
+
+                // Update header indicators
+                headers.forEach(function(h) { h.textContent = h.textContent.replace(/ [▲▼]$/, ''); });
+                th.textContent += asc ? ' ▲' : ' ▼';
+
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+
+                rows.sort(function(a, b) {
+                    const cellA = a.children[colIndex];
+                    const cellB = b.children[colIndex];
+                    let valA = cellA.dataset.value || cellA.textContent.trim();
+                    let valB = cellB.dataset.value || cellB.textContent.trim();
+
+                    // Try numeric comparison
+                    const numA = parseFloat(valA);
+                    const numB = parseFloat(valB);
+                    if (!isNaN(numA) && !isNaN(numB)) {
+                        return asc ? numA - numB : numB - numA;
+                    }
+                    // String comparison
+                    return asc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                });
+
+                rows.forEach(function(row) { tbody.appendChild(row); });
+            });
+        });
+    });
+})();

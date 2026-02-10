@@ -60,17 +60,26 @@
 {% if expenses.expense_list %}
 <div class="card">
     <h6>Expenses</h6>
-    {% for exp in expenses.expense_list %}
-    <div class="sale-item">
-        <div class="sale-left">
-            <strong>{{ exp.category or 'Uncategorized' }}</strong>
-            {% if exp.comment %}<br><span class="sale-meta">{{ exp.comment }}</span>{% endif %}
-        </div>
-        <div class="sale-right">
-            <div class="sale-amount" style="color: #f44336;">-{{ format_currency(exp.amount) }}</div>
-        </div>
-    </div>
-    {% endfor %}
+    <table class="product-table sortable-table" id="expenses-table" role="grid">
+        <thead>
+            <tr>
+                <th data-sort="date">Date</th>
+                <th data-sort="category">Category</th>
+                <th data-sort="comment">Comment</th>
+                <th data-sort="amount">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for exp in expenses.expense_list %}
+            <tr>
+                <td data-value="{{ exp.date }}">{{ exp.date }}</td>
+                <td>{{ exp.category or 'Uncategorized' }}</td>
+                <td>{{ exp.comment }}</td>
+                <td data-value="{{ exp.amount }}" style="color: #f44336; text-align: right;">-{{ format_currency(exp.amount) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 {% endif %}
 {% endblock %}
