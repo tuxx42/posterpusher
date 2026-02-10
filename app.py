@@ -2626,7 +2626,7 @@ async def check_new_transactions():
                 logger.error(f"Failed to fetch products for txn {txn_id}: {e}")
 
             message = (
-                f"💰 <b>New Sale!</b>\n\n"
+                f"💵 <b>Cha-ching!</b>\n\n"
                 f"<b>Time:</b> {time_str}\n"
                 f"<b>Amount:</b> {format_currency(total)}\n"
                 f"<b>Profit:</b> {format_currency(profit)}\n"
