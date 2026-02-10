@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>POS Dashboard - Login</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .login-box { text-align: center; max-width: 400px; }
+    </style>
+</head>
+<body>
+    <main class="login-box">
+        <h2>POS Dashboard</h2>
+        {% if error %}
+        <p>{{ error }}</p>
+        {% else %}
+        <p aria-busy="true">Authenticating...</p>
+        {% endif %}
+    </main>
+</body>
+</html>

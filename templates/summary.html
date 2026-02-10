@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Summary - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>Summary: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/summary?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/summary?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>This Week</a>
+    <a href="/summary?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>This Month</a>
+</div>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value">{{ summary.transaction_count }}</p>
+        <p class="label">Transactions</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(summary.total_sales) }}</p>
+        <p class="label">Total Sales</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(summary.total_profit) }}</p>
+        <p class="label">Gross Profit</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(expenses.total_expenses) }}</p>
+        <p class="label">Expenses</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(net_profit) }}</p>
+        <p class="label">Net Profit</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(summary.cash_sales) }}</p>
+        <p class="label">Cash</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(summary.card_sales) }}</p>
+        <p class="label">Card</p>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="charts-grid">
+    <div class="card chart-container">
+        <h6>Daily Breakdown</h6>
+        <canvas id="dailyChart"></canvas>
+    </div>
+    {% if hourly_data != "null" %}
+    <div class="card chart-container">
+        <h6>Hourly Breakdown</h6>
+        <canvas id="hourlyChart"></canvas>
+    </div>
+    {% endif %}
+</div>
+
+{% if expenses.expense_list %}
+<div class="card">
+    <h6>Expenses</h6>
+    {% for exp in expenses.expense_list %}
+    <div class="sale-item">
+        <div class="sale-left">
+            <strong>{{ exp.category or 'Uncategorized' }}</strong>
+            {% if exp.comment %}<br><span class="sale-meta">{{ exp.comment }}</span>{% endif %}
+        </div>
+        <div class="sale-right">
+            <div class="sale-amount" style="color: #f44336;">-{{ format_currency(exp.amount) }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const dailyData = {{ daily_data | safe }};
+    const hourlyData = {{ hourly_data | safe }};
+
+    // Daily breakdown chart
+    if (dailyData && dailyData.labels.length > 0) {
+        renderBarChart('dailyChart', dailyData.labels, [
+            { label: 'Sales', data: dailyData.sales.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' },
+            { label: 'Profit', data: dailyData.profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
+        ]);
+    }
+
+    // Hourly breakdown chart (today only)
+    if (hourlyData && hourlyData.labels) {
+        // Filter to only show hours with data
+        const start = hourlyData.sales.findIndex(v => v > 0);
+        const end = hourlyData.sales.length - 1 - [...hourlyData.sales].reverse().findIndex(v => v > 0);
+        if (start >= 0) {
+            const labels = hourlyData.labels.slice(start, end + 1);
+            const sales = hourlyData.sales.slice(start, end + 1);
+            const profit = hourlyData.profit.slice(start, end + 1);
+            renderBarChart('hourlyChart', labels, [
+                { label: 'Sales', data: sales.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' },
+                { label: 'Profit', data: profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
+            ]);
+        }
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Live Sales - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>
+    Live Sales
+    <small><span id="ws-indicator" class="ws-status ws-disconnected"></span><span id="ws-text">connecting...</span></small>
+</h4>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value" id="metric-count">{{ summary.transaction_count }}</p>
+        <p class="label">Transactions</p>
+    </div>
+    <div class="card metric">
+        <p class="value" id="metric-sales">{{ format_currency(summary.total_sales) }}</p>
+        <p class="label">Total Sales</p>
+    </div>
+    <div class="card metric">
+        <p class="value" id="metric-profit">{{ format_currency(summary.total_profit) }}</p>
+        <p class="label">Gross Profit</p>
+    </div>
+    <div class="card metric">
+        <p class="value" id="metric-cash">{{ format_currency(summary.cash_sales) }}</p>
+        <p class="label">Cash</p>
+    </div>
+    <div class="card metric">
+        <p class="value" id="metric-card">{{ format_currency(summary.card_sales) }}</p>
+        <p class="label">Card</p>
+    </div>
+</div>
+
+<!-- Sales feed -->
+<div class="card">
+    <div id="sales-feed">
+        {% for sale in sales %}
+        <div class="sale-item" data-txn-id="{{ sale.transaction_id }}">
+            <div class="sale-left">
+                <strong>{{ sale.time }}</strong>
+                {% if sale.table_name %}<span class="sale-meta"> &middot; {{ sale.table_name }}</span>{% endif %}
+                <br>
+                <span class="sale-meta {{ sale.payment_class }}">{{ sale.payment }}</span>
+            </div>
+            <div class="sale-right">
+                <div class="sale-amount">{{ sale.amount }}</div>
+                <div class="sale-meta">Profit: {{ sale.profit }}</div>
+            </div>
+        </div>
+        {% endfor %}
+        {% if not sales %}
+        <p style="text-align:center; opacity:0.5;">No sales today yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const WS_URL = "{{ ws_url }}";
+
+    // Track running totals for metric updates
+    let runningMetrics = {
+        count: {{ summary.transaction_count }},
+        sales: {{ summary.total_sales }},
+        profit: {{ summary.total_profit }},
+        cash: {{ summary.cash_sales }},
+        card: {{ summary.card_sales }}
+    };
+
+    function updateMetrics() {
+        document.getElementById('metric-count').textContent = runningMetrics.count;
+        document.getElementById('metric-sales').textContent = formatCurrency(runningMetrics.sales);
+        document.getElementById('metric-profit').textContent = formatCurrency(runningMetrics.profit);
+        document.getElementById('metric-cash').textContent = formatCurrency(runningMetrics.cash);
+        document.getElementById('metric-card').textContent = formatCurrency(runningMetrics.card);
+    }
+
+    function addSaleToFeed(sale) {
+        const feed = document.getElementById('sales-feed');
+        // Remove "no sales" message if present
+        const empty = feed.querySelector('p');
+        if (empty && empty.textContent.includes('No sales')) empty.remove();
+
+        // Determine payment type
+        let payment = 'Cash', paymentClass = 'badge-cash';
+        if (sale.payed_card > 0 && sale.payed_cash > 0) {
+            payment = 'Cash+Card'; paymentClass = 'badge-mixed';
+        } else if (sale.payed_card > 0) {
+            payment = 'Card'; paymentClass = 'badge-card';
+        }
+
+        // Extract time from close_time
+        let time = '';
+        if (sale.close_time && sale.close_time.includes(' ')) {
+            time = sale.close_time.split(' ')[1].substring(0, 5);
+        }
+
+        const div = document.createElement('div');
+        div.className = 'sale-item fade-in';
+        div.dataset.txnId = sale.transaction_id;
+        div.innerHTML = `
+            <div class="sale-left">
+                <strong>${time}</strong>
+                ${sale.table_name ? '<span class="sale-meta"> &middot; ' + sale.table_name + '</span>' : ''}
+                <br>
+                <span class="sale-meta ${paymentClass}">${payment}</span>
+            </div>
+            <div class="sale-right">
+                <div class="sale-amount">${formatCurrency(sale.sum)}</div>
+                <div class="sale-meta">Profit: ${formatCurrency(sale.total_profit)}</div>
+            </div>
+        `;
+        feed.prepend(div);
+
+        // Update running metrics
+        runningMetrics.count += 1;
+        runningMetrics.sales += sale.sum;
+        runningMetrics.profit += sale.total_profit;
+        runningMetrics.cash += sale.payed_cash;
+        runningMetrics.card += sale.payed_card;
+        updateMetrics();
+    }
+
+    // Initialize WebSocket
+    initSalesWebSocket(WS_URL, addSaleToFeed);
+</script>
+{% endblock %}

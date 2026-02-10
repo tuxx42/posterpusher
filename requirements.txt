@@ -4,3 +4,7 @@ pytz==2024.1
 APScheduler==3.10.4
 matplotlib==3.8.2
 anthropic>=0.40.0
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+jinja2==3.1.4
+websockets>=12.0

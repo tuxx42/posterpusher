@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Products - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>Products: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/products?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/products?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>This Week</a>
+    <a href="/products?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>This Month</a>
+</div>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value">{{ "%.0f" | format(total_items) }}</p>
+        <p class="label">Items Sold</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(total_revenue) }}</p>
+        <p class="label">Revenue</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(total_profit) }}</p>
+        <p class="label">Profit</p>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="charts-grid">
+    <div class="card chart-container">
+        <h6>Top Products by Revenue</h6>
+        <canvas id="productsBarChart"></canvas>
+    </div>
+    <div class="card chart-container">
+        <h6>Revenue Distribution</h6>
+        <canvas id="productsPieChart"></canvas>
+    </div>
+</div>
+
+<!-- Product table -->
+{% if products %}
+<div class="card">
+    <table class="product-table" role="grid">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Revenue</th>
+                <th>Profit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in products %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ p.product_name }}</td>
+                <td>{{ "%.0f" | format(p.count) }}</td>
+                <td>{{ format_currency(p.payed_sum) }}</td>
+                <td>{{ format_currency(p.product_profit) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p style="text-align:center; opacity:0.5;">No product data for this period.</p>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const barData = {{ bar_data | safe }};
+    const pieData = {{ pie_data | safe }};
+
+    // Top products horizontal bar chart
+    if (barData && barData.labels.length > 0) {
+        renderHorizontalBarChart('productsBarChart', barData.labels, [
+            { label: 'Revenue', data: barData.revenue.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' },
+            { label: 'Profit', data: barData.profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
+        ]);
+    }
+
+    // Revenue pie chart
+    if (pieData && pieData.labels.length > 0) {
+        renderPieChart('productsPieChart', pieData.labels, pieData.values.map(v => v / 100));
+    }
+</script>
+{% endblock %}

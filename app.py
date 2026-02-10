@@ -533,6 +533,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/alerts_off - Disable theft alerts\n\n"
         "<b>🤖 AI Assistant:</b>\n"
         "/agent &lt;question&gt; - Ask AI about your data\n\n"
+        "<b>📊 Dashboard:</b>\n"
+        "/dashboard - Open web dashboard\n\n"
     )
 
     # Add admin commands if user is admin
@@ -2650,6 +2652,22 @@ async def check_new_transactions():
                         subscribed_chats.discard(chat_id)
                         save_config()
 
+            # Broadcast to WebSocket dashboard clients
+            try:
+                from dashboard import broadcast_sale
+                await broadcast_sale({
+                    "transaction_id": txn_id,
+                    "sum": total,
+                    "total_profit": profit,
+                    "payed_cash": payed_cash,
+                    "payed_card": payed_card,
+                    "table_name": table_name,
+                    "close_time": close_time,
+                    "items": items_str,
+                })
+            except Exception as e:
+                logger.debug(f"Dashboard broadcast failed: {e}")
+
             # Mark as notified after successful processing
             notified_transaction_ids.add(txn_id_str)
             config.notified_transaction_ids = notified_transaction_ids
@@ -2693,10 +2711,39 @@ async def send_daily_summary():
         logger.error(f"Failed to send daily summary: {e}")
 
 
+@require_auth
+async def dashboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /dashboard command - generate a login URL for the web dashboard."""
+    from dashboard import generate_dashboard_token, get_dashboard_url
+
+    chat_id = str(update.effective_chat.id)
+    user = update.effective_user
+    username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
+
+    token = generate_dashboard_token(chat_id, username)
+
+    dashboard_url = get_dashboard_url()
+    login_url = f"{dashboard_url}/auth?token={token}"
+
+    await update.message.reply_text(
+        f"<b>Web Dashboard</b>\n\n"
+        f"Click to open your dashboard:\n"
+        f'<a href="{login_url}">Open Dashboard</a>\n\n'
+        f"<i>This link expires in 10 minutes.</i>",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+
+
 async def startup(application):
     """Run startup tasks before polling begins."""
     logger.info("Running startup tasks...")
     await clear_webhook()
+
+    # Start the dashboard web server
+    from dashboard import start_dashboard_server
+    asyncio.create_task(start_dashboard_server())
+
     logger.info("Startup complete")
 
 
@@ -2704,6 +2751,11 @@ async def shutdown(application):
     """Run cleanup tasks when bot stops."""
     global scheduler
     logger.info("Shutting down...")
+
+    # Stop the dashboard web server
+    from dashboard import stop_dashboard_server
+    await stop_dashboard_server()
+
     if scheduler:
         scheduler.shutdown(wait=False)
     logger.info("Shutdown complete")
@@ -2940,6 +2992,7 @@ def main():
     application.add_handler(CommandHandler("alerts", alerts_on))
     application.add_handler(CommandHandler("alerts_off", alerts_off))
     application.add_handler(CommandHandler("agent", agent))
+    application.add_handler(CommandHandler("dashboard", dashboard_cmd))
 
     # Set up scheduler for background jobs
     scheduler = AsyncIOScheduler(timezone=THAI_TZ)

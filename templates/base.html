@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}POS Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        :root { --pico-font-size: 15px; }
+        nav { padding: 0.5rem 1rem; }
+        .card {
+            background: var(--pico-card-background-color);
+            border-radius: var(--pico-border-radius);
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .metric { text-align: center; padding: 0.75rem; }
+        .metric .value { font-size: 1.6rem; font-weight: bold; margin: 0; }
+        .metric .label { font-size: 0.8rem; opacity: 0.7; margin: 0; }
+        .grid-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+        .sale-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+            padding: 0.6rem 0;
+        }
+        .sale-item:last-child { border-bottom: none; }
+        .sale-left { flex: 1; }
+        .sale-right { text-align: right; min-width: 100px; }
+        .sale-amount { font-weight: bold; font-size: 1.1rem; }
+        .sale-meta { font-size: 0.8rem; opacity: 0.7; }
+        .badge-cash { color: #4CAF50; }
+        .badge-card { color: #2196F3; }
+        .badge-mixed { color: #FF9800; }
+        .period-nav { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .period-nav a {
+            padding: 0.4rem 0.8rem;
+            border-radius: var(--pico-border-radius);
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .period-nav a[aria-current="true"] {
+            background: var(--pico-primary-background);
+            color: var(--pico-primary-inverse);
+        }
+        .chart-container {
+            position: relative;
+            margin-bottom: 1.5rem;
+        }
+        .ws-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+        .ws-connected { background: #4CAF50; }
+        .ws-disconnected { background: #f44336; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        .product-table { font-size: 0.9rem; }
+        .product-table th { cursor: pointer; user-select: none; }
+        .product-table th:hover { opacity: 0.8; }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        @media (max-width: 768px) {
+            .charts-grid { grid-template-columns: 1fr; }
+        }
+        footer { text-align: center; opacity: 0.5; font-size: 0.75rem; padding: 1rem; }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <nav>
+        <ul>
+            <li><strong>POS Dashboard</strong></li>
+        </ul>
+        <ul>
+            <li><a href="/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Live</a></li>
+            <li><a href="/summary" {% if active_page == 'summary' %}aria-current="page"{% endif %}>Summary</a></li>
+            <li><a href="/products" {% if active_page == 'products' %}aria-current="page"{% endif %}>Products</a></li>
+            <li><small style="opacity:0.5">{{ username }}</small></li>
+        </ul>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <footer>POS Dashboard</footer>
+    <script src="/static/dashboard.js"></script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>
