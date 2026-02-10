@@ -441,13 +441,23 @@ async def api_products(period: str, session: dict = Depends(require_auth)):
     # Sort by revenue descending
     product_list.sort(key=lambda x: x["payed_sum"], reverse=True)
 
-    # Build chart data — top 10 for bar chart, top 8 + "Other" for pie
+    # Build chart data — top 10 for bar chart, dynamic cutoff for pie
     top_10 = product_list[:10]
-    top_8 = product_list[:8]
-    other_revenue = sum(p["payed_sum"] for p in product_list[8:])
 
-    pie_labels = [p["product_name"] for p in top_8]
-    pie_values = [p["payed_sum"] for p in top_8]
+    # Dynamic pie cutoff: keep adding products until "Other" is ≤ 15% of total
+    pie_cutoff = min(len(product_list), 8)
+    if total_revenue > 0:
+        for i in range(pie_cutoff, len(product_list)):
+            remaining = sum(p["payed_sum"] for p in product_list[i:])
+            if remaining / total_revenue <= 0.15:
+                break
+            pie_cutoff = i + 1
+
+    pie_products = product_list[:pie_cutoff]
+    other_revenue = sum(p["payed_sum"] for p in product_list[pie_cutoff:])
+
+    pie_labels = [p["product_name"] for p in pie_products]
+    pie_values = [p["payed_sum"] for p in pie_products]
     if other_revenue > 0:
         pie_labels.append("Other")
         pie_values.append(other_revenue)
@@ -688,11 +698,21 @@ async def page_products(request: Request, period: str = "today"):
 
     # Chart data
     top_10 = product_list[:10]
-    top_8 = product_list[:8]
-    other_revenue = sum(p["payed_sum"] for p in product_list[8:])
 
-    pie_labels = [p["product_name"] for p in top_8]
-    pie_values = [p["payed_sum"] for p in top_8]
+    # Dynamic pie cutoff: keep adding products until "Other" is ≤ 15% of total
+    pie_cutoff = min(len(product_list), 8)
+    if total_revenue > 0:
+        for i in range(pie_cutoff, len(product_list)):
+            remaining = sum(p["payed_sum"] for p in product_list[i:])
+            if remaining / total_revenue <= 0.15:
+                break
+            pie_cutoff = i + 1
+
+    pie_products = product_list[:pie_cutoff]
+    other_revenue = sum(p["payed_sum"] for p in product_list[pie_cutoff:])
+
+    pie_labels = [p["product_name"] for p in pie_products]
+    pie_values = [p["payed_sum"] for p in pie_products]
     if other_revenue > 0:
         pie_labels.append("Other")
         pie_values.append(other_revenue)
