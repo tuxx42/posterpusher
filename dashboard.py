@@ -489,13 +489,33 @@ async def page_dashboard(request: Request):
             "error": "Please run /dashboard in Telegram to get a login link."
         }, status_code=401)
 
-    from app import fetch_transactions, get_business_date, adjust_poster_time, calculate_summary, format_currency
+    from app import fetch_transactions, fetch_cash_shifts, get_business_date, adjust_poster_time, calculate_summary, format_currency
 
     today_str = get_business_date().strftime('%Y%m%d')
     transactions = await _run_sync(fetch_transactions, today_str)
     closed = _filter_closed_sales(transactions)
     closed.sort(key=lambda x: int(x.get('transaction_id', 0) or 0), reverse=True)
     summary = calculate_summary(closed)
+
+    # Fetch cash register status
+    shifts = await _run_sync(fetch_cash_shifts)
+    cash_register = None
+    if shifts:
+        latest = shifts[0]
+        shift_end = latest.get('date_end', '')
+        amount_start = int(latest.get('amount_start', 0) or 0)
+        cash_sales = int(latest.get('amount_sell_cash', 0) or 0)
+        cash_out = int(latest.get('amount_credit', 0) or 0)
+        if shift_end:
+            current_cash = int(latest.get('amount_end', 0) or 0)
+            cash_status = "Closed"
+        else:
+            current_cash = amount_start + cash_sales - cash_out
+            cash_status = "Open"
+        cash_register = {
+            "status": cash_status,
+            "current_cash": current_cash,
+        }
 
     # Pre-process sales for template
     sales_display = []
@@ -532,6 +552,7 @@ async def page_dashboard(request: Request):
         "request": request,
         "active_page": "dashboard",
         "summary": summary,
+        "cash_register": cash_register,
         "sales": sales_display,
         "format_currency": format_currency,
         "ws_url": ws_url,
