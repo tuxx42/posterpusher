@@ -586,14 +586,14 @@ async def page_summary(request: Request, period: str = "today"):
     daily = _build_daily_breakdown(closed)
     hourly = _build_hourly_breakdown(closed) if period == "today" else None
 
-    # Build expense-by-category pie chart data
+    # Build expense-by-comment pie chart data
     from collections import defaultdict
-    expense_by_category = defaultdict(int)
+    expense_by_comment = defaultdict(int)
     for exp in expenses["expense_list"]:
-        cat = exp.get("category") or "Uncategorized"
-        expense_by_category[cat] += exp["amount"]
+        label = exp.get("comment") or exp.get("category") or "Uncategorized"
+        expense_by_comment[label] += exp["amount"]
     # Sort by amount descending
-    sorted_cats = sorted(expense_by_category.items(), key=lambda x: x[1], reverse=True)
+    sorted_cats = sorted(expense_by_comment.items(), key=lambda x: x[1], reverse=True)
     expense_pie = {
         "labels": [c[0] for c in sorted_cats],
         "values": [c[1] for c in sorted_cats],

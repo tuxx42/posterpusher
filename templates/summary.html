@@ -55,14 +55,15 @@
         <canvas id="hourlyChart"></canvas>
     </div>
     {% endif %}
+    {% if expense_pie_data != "null" %}
+    <div class="card chart-container">
+        <h6>Expenses Breakdown</h6>
+        <canvas id="expensePieChart"></canvas>
+    </div>
+    {% endif %}
 </div>
 
 {% if expenses.expense_list %}
-<div class="card chart-container" style="max-width: 500px;">
-    <h6>Expenses by Category</h6>
-    <canvas id="expensePieChart"></canvas>
-</div>
-
 <div class="card">
     <h6>Expenses</h6>
     <table class="product-table sortable-table" id="expenses-table" role="grid">
