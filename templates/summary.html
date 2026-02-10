@@ -9,6 +9,16 @@
     <a href="/summary?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
     <a href="/summary?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>This Week</a>
     <a href="/summary?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>This Month</a>
+    <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
+</div>
+<div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
+    <form method="get" action="/summary">
+        <input type="hidden" name="period" value="custom">
+        <input type="date" name="date_from" value="{{ date_from_iso or '' }}" required>
+        <span style="opacity:0.5">to</span>
+        <input type="date" name="date_to" value="{{ date_to_iso or '' }}" required>
+        <button type="submit">Go</button>
+    </form>
 </div>
 
 <!-- Metric cards -->
@@ -124,5 +134,14 @@
     if (expensePieData && expensePieData.labels.length > 0) {
         renderPieChart('expensePieChart', expensePieData.labels, expensePieData.values.map(v => v / 100));
     }
+
+    // Custom date range toggle
+    document.getElementById('custom-toggle').addEventListener('click', function(e) {
+        e.preventDefault();
+        const panel = document.getElementById('custom-range');
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'flex';
+        if (!visible) panel.querySelector('input[type="date"]').focus();
+    });
 </script>
 {% endblock %}

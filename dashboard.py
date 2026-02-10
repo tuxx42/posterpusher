@@ -561,7 +561,12 @@ async def page_dashboard(request: Request):
 
 
 @dashboard_app.get("/summary", response_class=HTMLResponse)
-async def page_summary(request: Request, period: str = "today"):
+async def page_summary(
+    request: Request,
+    period: str = "today",
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+):
     """Summary dashboard page."""
     session = get_session(request)
     if session is None:
@@ -572,12 +577,33 @@ async def page_summary(request: Request, period: str = "today"):
 
     from app import fetch_transactions, fetch_finance_transactions, calculate_summary, calculate_expenses, format_currency
 
-    if period not in ("today", "week", "month"):
-        period = "today"
+    date_from_iso = ""
+    date_to_iso = ""
+    date_from_api = ""
+    date_to_api = ""
+    display = ""
 
-    date_from, date_to, display = _get_date_range(period)
-    transactions = await _run_sync(fetch_transactions, date_from, date_to)
-    finance_txns = await _run_sync(fetch_finance_transactions, date_from, date_to)
+    if period == "custom" and date_from and date_to:
+        # Parse ISO dates (YYYY-MM-DD) to API format (YYYYMMDD)
+        try:
+            df = datetime.strptime(date_from, "%Y-%m-%d")
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            date_from_iso = date_from
+            date_to_iso = date_to
+            date_from_api = df.strftime("%Y%m%d")
+            date_to_api = dt.strftime("%Y%m%d")
+            display = f"{df.strftime('%d %b')} - {dt.strftime('%d %b %Y')}"
+        except ValueError:
+            period = "today"
+    else:
+        if period not in ("today", "week", "month"):
+            period = "today"
+
+    if period != "custom":
+        date_from_api, date_to_api, display = _get_date_range(period)
+
+    transactions = await _run_sync(fetch_transactions, date_from_api, date_to_api)
+    finance_txns = await _run_sync(fetch_finance_transactions, date_from_api, date_to_api)
 
     closed = _filter_closed_sales(transactions)
     summary = calculate_summary(closed)
@@ -610,6 +636,8 @@ async def page_summary(request: Request, period: str = "today"):
         "daily_data": json.dumps(daily),
         "hourly_data": json.dumps(hourly) if hourly else "null",
         "expense_pie_data": json.dumps(expense_pie) if expense_pie else "null",
+        "date_from_iso": date_from_iso,
+        "date_to_iso": date_to_iso,
         "format_currency": format_currency,
         "username": session["username"],
     })
