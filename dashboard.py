@@ -23,7 +23,7 @@ DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
 # Railway sets PORT env var; fall back to DASHBOARD_PORT or 8050 for local dev
 DASHBOARD_PORT = int(os.environ.get("PORT", os.environ.get("DASHBOARD_PORT", "8050")))
 SESSION_SECRET = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
-TOKEN_EXPIRY_MINUTES = 10
+TOKEN_EXPIRY_MINUTES = 60
 SESSION_EXPIRY_HOURS = 24
 SESSION_COOKIE_NAME = "pos_session_id"
 
@@ -162,8 +162,8 @@ async def websocket_sales(websocket: WebSocket):
 
 @dashboard_app.get("/auth")
 async def auth_token_exchange(request: Request, token: str = Query(...)):
-    """Exchange a one-time token for a session cookie."""
-    token_data = dashboard_tokens.pop(token, None)
+    """Exchange a token for a session cookie. Token is reusable until it expires."""
+    token_data = dashboard_tokens.get(token)
     if not token_data:
         return templates.TemplateResponse("login.html", {
             "request": request,

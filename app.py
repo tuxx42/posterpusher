@@ -2729,7 +2729,7 @@ async def dashboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"<b>Web Dashboard</b>\n\n"
         f"Click to open your dashboard:\n"
         f'<a href="{login_url}">Open Dashboard</a>\n\n'
-        f"<i>This link expires in 10 minutes.</i>",
+        f"<i>This link expires in 1 hour.</i>",
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True
     )
