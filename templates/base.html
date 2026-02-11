@@ -121,6 +121,7 @@
         <ul>
             <li><a href="/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Live</a></li>
             <li><a href="/summary" {% if active_page == 'summary' %}aria-current="page"{% endif %}>Summary</a></li>
+            <li><a href="/hourly" {% if active_page == 'hourly' %}aria-current="page"{% endif %}>Hourly</a></li>
             <li><a href="/products" {% if active_page == 'products' %}aria-current="page"{% endif %}>Products</a></li>
             <li><small style="opacity:0.5">{{ username }}</small></li>
         </ul>

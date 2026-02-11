@@ -272,6 +272,38 @@ def _build_daily_breakdown(transactions):
     }
 
 
+def _build_hourly_by_weekday(transactions):
+    """Group transactions by day-of-week and hour for Chart.js."""
+    from app import adjust_poster_time
+
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    data = {day: {h: {"sales": 0, "profit": 0, "count": 0} for h in range(24)} for day in day_names}
+
+    for txn in transactions:
+        close_date = adjust_poster_time(txn.get('date_close_date', ''))
+        if ' ' in close_date:
+            try:
+                dt = datetime.strptime(close_date, "%Y-%m-%d %H:%M:%S")
+                day_name = day_names[dt.weekday()]
+                hour = dt.hour
+                data[day_name][hour]["sales"] += int(txn.get('sum', 0) or 0)
+                data[day_name][hour]["profit"] += int(txn.get('total_profit', 0) or 0)
+                data[day_name][hour]["count"] += 1
+            except (ValueError, IndexError):
+                pass
+
+    labels = [f"{h:02d}:00" for h in range(24)]
+    result = {}
+    for day in day_names:
+        result[day] = {
+            "labels": labels,
+            "sales": [data[day][h]["sales"] for h in range(24)],
+            "profit": [data[day][h]["profit"] for h in range(24)],
+            "count": [data[day][h]["count"] for h in range(24)],
+        }
+    return result
+
+
 def _build_hourly_breakdown(transactions):
     """Group transactions by hour for Chart.js hourly breakdown."""
     from app import adjust_poster_time
@@ -646,6 +678,64 @@ async def page_summary(
         "daily_data": json.dumps(daily),
         "hourly_data": json.dumps(hourly) if hourly else "null",
         "expense_pie_data": json.dumps(expense_pie) if expense_pie else "null",
+        "date_from_iso": date_from_iso,
+        "date_to_iso": date_to_iso,
+        "format_currency": format_currency,
+        "username": session["username"],
+    })
+
+
+@dashboard_app.get("/hourly", response_class=HTMLResponse)
+async def page_hourly(
+    request: Request,
+    period: str = "month",
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+):
+    """Hourly summary page with charts grouped by day of week."""
+    session = get_session(request)
+    if session is None:
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "error": "Please run /dashboard in Telegram to get a login link."
+        }, status_code=401)
+
+    from app import fetch_transactions, format_currency
+
+    date_from_iso = ""
+    date_to_iso = ""
+    date_from_api = ""
+    date_to_api = ""
+    display = ""
+
+    if period == "custom" and date_from and date_to:
+        try:
+            df = datetime.strptime(date_from, "%Y-%m-%d")
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            date_from_iso = date_from
+            date_to_iso = date_to
+            date_from_api = df.strftime("%Y%m%d")
+            date_to_api = dt.strftime("%Y%m%d")
+            display = f"{df.strftime('%d %b')} - {dt.strftime('%d %b %Y')}"
+        except ValueError:
+            period = "month"
+    else:
+        if period not in ("today", "week", "month"):
+            period = "month"
+
+    if period != "custom":
+        date_from_api, date_to_api, display = _get_date_range(period)
+
+    transactions = await _run_sync(fetch_transactions, date_from_api, date_to_api)
+    closed = _filter_closed_sales(transactions)
+    weekday_data = _build_hourly_by_weekday(closed)
+
+    return templates.TemplateResponse("hourly.html", {
+        "request": request,
+        "active_page": "hourly",
+        "period": period,
+        "display": display,
+        "weekday_data": json.dumps(weekday_data),
         "date_from_iso": date_from_iso,
         "date_to_iso": date_to_iso,
         "format_currency": format_currency,

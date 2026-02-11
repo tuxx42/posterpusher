@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Hourly Summary - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>Hourly Summary: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/hourly?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/hourly?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>This Week</a>
+    <a href="/hourly?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>This Month</a>
+    <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
+</div>
+<div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
+    <form method="get" action="/hourly" id="custom-range-form">
+        <input type="hidden" name="period" value="custom">
+        <input type="hidden" name="date_from" id="date_from" value="{{ date_from_iso or '' }}">
+        <input type="hidden" name="date_to" id="date_to" value="{{ date_to_iso or '' }}">
+        <input type="text" id="date-range-picker" placeholder="Select date range…" readonly required>
+        <button type="submit">Go</button>
+    </form>
+</div>
+
+<!-- Charts grid: one chart per day of week -->
+<div class="charts-grid">
+    {% for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] %}
+    <div class="card chart-container">
+        <h6>{{ day }}</h6>
+        <canvas id="chart-{{ day }}"></canvas>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const weekdayData = {{ weekday_data | safe }};
+    const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+    days.forEach(function(day) {
+        const d = weekdayData[day];
+        if (!d) return;
+
+        // Trim leading/trailing empty hours
+        const start = d.sales.findIndex(v => v > 0);
+        const end = d.sales.length - 1 - [...d.sales].reverse().findIndex(v => v > 0);
+        if (start < 0) return;
+
+        const labels = d.labels.slice(start, end + 1);
+        const sales = d.sales.slice(start, end + 1);
+        const profit = d.profit.slice(start, end + 1);
+
+        renderBarChart('chart-' + day, labels, [
+            { label: 'Sales', data: sales.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' },
+            { label: 'Profit', data: profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
+        ]);
+    });
+
+    // Flatpickr date range picker
+    const dfVal = document.getElementById('date_from').value;
+    const dtVal = document.getElementById('date_to').value;
+    const fp = flatpickr('#date-range-picker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: (dfVal && dtVal) ? [dfVal, dtVal] : [],
+        onChange: function(selectedDates) {
+            if (selectedDates.length === 2) {
+                const fmt = d => d.toISOString().slice(0, 10);
+                document.getElementById('date_from').value = fmt(selectedDates[0]);
+                document.getElementById('date_to').value = fmt(selectedDates[1]);
+            }
+        }
+    });
+
+    // Custom date range toggle
+    document.getElementById('custom-toggle').addEventListener('click', function(e) {
+        e.preventDefault();
+        const panel = document.getElementById('custom-range');
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'flex';
+        if (!visible) fp.open();
+    });
+</script>
+{% endblock %}
