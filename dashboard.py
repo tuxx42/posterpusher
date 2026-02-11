@@ -208,45 +208,87 @@ def _build_daily_breakdown(transactions):
     }
 
 
-def _build_cash_timeline(transactions, finance_txns):
-    """Build cumulative cash timeline from sales and expenses."""
+def _build_cash_timeline(transactions, finance_txns, shifts):
+    """Build cash timeline anchored to Poster shift data.
+
+    For each shift, plots opening balance, incremental cash events, and
+    closing balance (if closed).  This ensures the graph matches the
+    cash-register values Poster reports.
+    """
     from app import adjust_poster_time
 
-    # Collect cash-in events from sales
-    events = []
+    if not shifts:
+        return None
+
+    def _to_iso(ts):
+        return ts.replace(' ', 'T') if ' ' in ts else ts + "T00:00:00"
+
+    # Collect all cash events (using raw Poster times for shift matching)
+    cash_events = []
     for txn in transactions:
         payed_cash = int(txn.get('payed_cash', 0) or 0)
         if payed_cash > 0:
-            close_time = adjust_poster_time(txn.get('date_close_date', ''))
-            events.append({"time": close_time, "amount": payed_cash})
+            raw_time = txn.get('date_close_date', '')
+            cash_events.append({"raw": raw_time, "amount": payed_cash})
 
-    # Collect cash-out events from expenses
     for txn in finance_txns:
         amount = int(txn.get('amount', 0) or 0)
         comment = txn.get('comment', '')
         if 'Cash payments' in comment:
             continue
         if amount < 0:
-            date_str = txn.get('date', '')
-            events.append({"time": date_str, "amount": amount})
+            raw_time = txn.get('date', '')
+            cash_events.append({"raw": raw_time, "amount": amount})
 
-    if not events:
+    if not cash_events:
         return None
 
-    events.sort(key=lambda e: e["time"])
+    # Determine the time range of our data
+    earliest = min(ev["raw"] for ev in cash_events)
+    latest_time = max(ev["raw"] for ev in cash_events)
 
-    balance = 0
     points = []
-    for ev in events:
-        balance += ev["amount"]
-        # Use ISO timestamp for Chart.js time scale
-        t = ev["time"]
-        if ' ' in t:
-            iso = t.replace(' ', 'T')
-        else:
-            iso = t + "T00:00:00"
-        points.append({"x": iso, "y": balance})
 
+    # Process shifts in chronological order (API returns newest first)
+    for shift in reversed(shifts):
+        shift_start_raw = shift.get('date_start', '')
+        shift_end_raw = shift.get('date_end', '')
+        opening = int(shift.get('amount_start', 0) or 0)
+
+        # Skip shifts that don't overlap with our data range
+        if shift_end_raw and shift_end_raw < earliest:
+            continue
+        if shift_start_raw > latest_time:
+            continue
+
+        # Opening point
+        start_iso = _to_iso(adjust_poster_time(shift_start_raw))
+        points.append({"x": start_iso, "y": opening})
+
+        # Find events within this shift's time window
+        shift_events = []
+        for ev in cash_events:
+            if ev["raw"] >= shift_start_raw and (not shift_end_raw or ev["raw"] <= shift_end_raw):
+                shift_events.append(ev)
+        shift_events.sort(key=lambda e: e["raw"])
+
+        # Plot incremental balance changes
+        balance = opening
+        for ev in shift_events:
+            balance += ev["amount"]
+            ev_iso = _to_iso(adjust_poster_time(ev["raw"]))
+            points.append({"x": ev_iso, "y": balance})
+
+        # Closing point from Poster (if shift is closed)
+        if shift_end_raw:
+            closing = int(shift.get('amount_end', 0) or 0)
+            end_iso = _to_iso(adjust_poster_time(shift_end_raw))
+            points.append({"x": end_iso, "y": closing})
+
+    if len(points) <= 1:
+        return None
+
+    points.sort(key=lambda p: p["x"])
     return {"points": points}
 
 
@@ -535,21 +577,8 @@ async def page_dashboard(request: Request):
             "current_cash": current_cash,
         }
 
-    # Build cash register timeline (running balance over time)
-    cash_timeline = _build_cash_timeline(closed, finance_txns)
-    if cash_timeline and cash_register:
-        opening = int(shifts[0].get('amount_start', 0) or 0)
-        # Offset all points by shift opening balance
-        for p in cash_timeline["points"]:
-            p["y"] += opening
-        # Add opening point at shift start time
-        shift_start = adjust_poster_time(latest.get('date_start', ''))
-        open_iso = shift_start.replace(' ', 'T') if ' ' in shift_start else shift_start + "T00:00:00"
-        cash_timeline["points"].insert(0, {"x": open_iso, "y": opening})
-        if cash_register["status"] == "Closed":
-            close_iso = shift_end.replace(' ', 'T') if ' ' in shift_end else shift_end + "T00:00:00"
-            cash_timeline["points"].append({"x": close_iso, "y": cash_register["current_cash"]})
-        cash_timeline["points"].sort(key=lambda p: p["x"])
+    # Build cash register timeline anchored to shift data
+    cash_timeline = _build_cash_timeline(closed, finance_txns, shifts)
 
     # Pre-process sales and expenses for merged feed
     from app import calculate_expenses
@@ -684,23 +713,9 @@ async def page_summary(
 
     daily = _build_daily_breakdown(closed)
     hourly = _build_hourly_breakdown(closed)
-    cash_timeline = _build_cash_timeline(closed, finance_txns)
 
-    # Add shift opening balance to cash timeline
     shifts = await _run_sync(fetch_cash_shifts)
-    if cash_timeline and shifts:
-        # Find shifts that overlap with the selected date range
-        for shift in shifts:
-            shift_start = adjust_poster_time(shift.get('date_start', ''))
-            opening = int(shift.get('amount_start', 0) or 0)
-            if opening > 0:
-                # Offset all points by opening balance
-                for p in cash_timeline["points"]:
-                    p["y"] += opening
-                open_iso = shift_start.replace(' ', 'T') if ' ' in shift_start else shift_start + "T00:00:00"
-                cash_timeline["points"].insert(0, {"x": open_iso, "y": opening})
-                cash_timeline["points"].sort(key=lambda p: p["x"])
-                break
+    cash_timeline = _build_cash_timeline(closed, finance_txns, shifts)
 
     # Build expense-by-comment pie chart data
     from collections import defaultdict
