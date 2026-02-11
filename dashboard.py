@@ -629,26 +629,16 @@ async def page_dashboard(request: Request):
     feed_items.sort(key=lambda x: x["sort_time"], reverse=True)
     feed_items = feed_items[:40]
 
-    # Goal progress — calendar month to date
+    # Goal progress — today
     goal_progress = 0
     goal_percent = 0
     goal_percent_adjusted = 0
     if config.monthly_goal > 0:
         today = get_business_date()
-        month_start = today.replace(day=1).strftime('%Y%m%d')
-        month_end = today.strftime('%Y%m%d')
-        if month_start == today_str:
-            # Already have today's data
-            goal_progress = summary["total_profit"]
-        else:
-            month_txns = await _run_sync(fetch_transactions, month_start, month_end)
-            month_closed = _filter_closed_sales(month_txns)
-            month_summary = calculate_summary(month_closed)
-            goal_progress = month_summary["total_profit"]
+        goal_progress = summary["total_profit"]
         goal_percent = goal_progress / config.monthly_goal * 100
-        days_elapsed = today.day
         days_in_month = calendar.monthrange(today.year, today.month)[1]
-        adjusted_goal = config.monthly_goal * days_elapsed / days_in_month
+        adjusted_goal = config.monthly_goal / days_in_month
         goal_percent_adjusted = (goal_progress / adjusted_goal * 100) if adjusted_goal > 0 else 0
 
     ws_host = get_dashboard_url()
