@@ -633,13 +633,14 @@ async def page_dashboard(request: Request):
     goal_progress = 0
     goal_percent = 0
     goal_percent_adjusted = 0
+    goal_adjusted = 0
     if config.monthly_goal > 0:
         today = get_business_date()
         goal_progress = summary["total_profit"]
         goal_percent = goal_progress / config.monthly_goal * 100
         days_in_month = calendar.monthrange(today.year, today.month)[1]
-        adjusted_goal = config.monthly_goal / days_in_month
-        goal_percent_adjusted = (goal_progress / adjusted_goal * 100) if adjusted_goal > 0 else 0
+        goal_adjusted = config.monthly_goal / days_in_month
+        goal_percent_adjusted = (goal_progress / goal_adjusted * 100) if goal_adjusted > 0 else 0
 
     ws_host = get_dashboard_url()
     ws_url = ws_host.replace("http://", "ws://").replace("https://", "wss://") + "/ws/sales"
@@ -654,6 +655,7 @@ async def page_dashboard(request: Request):
         "format_currency": format_currency,
         "ws_url": ws_url,
         "monthly_goal": config.monthly_goal,
+        "goal_adjusted": goal_adjusted,
         "goal_progress": goal_progress,
         "goal_percent": goal_percent,
         "goal_percent_adjusted": goal_percent_adjusted,
@@ -750,6 +752,7 @@ async def page_summary(
     goal_progress = summary["total_profit"]
     goal_percent = (goal_progress / config.monthly_goal * 100) if config.monthly_goal > 0 else 0
     goal_percent_adjusted = 0
+    goal_adjusted = 0
     if config.monthly_goal > 0:
         from app import get_business_date
         today = get_business_date()
@@ -766,8 +769,8 @@ async def page_summary(
             num_days = (dt - df).days + 1
         else:
             num_days = 1
-        adjusted_goal = config.monthly_goal * num_days / days_in_month
-        goal_percent_adjusted = (goal_progress / adjusted_goal * 100) if adjusted_goal > 0 else 0
+        goal_adjusted = config.monthly_goal * num_days / days_in_month
+        goal_percent_adjusted = (goal_progress / goal_adjusted * 100) if goal_adjusted > 0 else 0
 
     # Prev/next day links for single-day custom view
     prev_day = ""
@@ -796,6 +799,7 @@ async def page_summary(
         "next_day": next_day,
         "format_currency": format_currency,
         "monthly_goal": config.monthly_goal,
+        "goal_adjusted": goal_adjusted,
         "goal_progress": goal_progress,
         "goal_percent": goal_percent,
         "goal_percent_adjusted": goal_percent_adjusted,
