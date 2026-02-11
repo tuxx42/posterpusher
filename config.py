@@ -30,6 +30,9 @@ last_cash_balance = None
 last_alerted_transaction_id = 0
 last_alerted_expense_id = 0
 
+# Monthly goal (in satang/cents)
+monthly_goal = 0
+
 # Authentication state
 admin_chat_ids = set()
 approved_users = {}
@@ -193,7 +196,7 @@ def mask_api_key(key: str) -> str:
 def load_config():
     """Load persisted state from config file."""
     global notified_transaction_ids, notified_transaction_date, last_seen_void_id, last_cash_balance
-    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN, LOG_LEVEL
+    global ANTHROPIC_API_KEY, POSTER_ACCESS_TOKEN, LOG_LEVEL, monthly_goal
 
     try:
         if os.path.exists(CONFIG_FILE):
@@ -231,6 +234,8 @@ def load_config():
                 global last_alerted_transaction_id, last_alerted_expense_id
                 last_alerted_transaction_id = cfg.get('last_alerted_transaction_id', 0)
                 last_alerted_expense_id = cfg.get('last_alerted_expense_id', 0)
+
+                monthly_goal = cfg.get('monthly_goal', 0)
 
                 # Load API keys (config file overrides env vars)
                 if cfg.get('ANTHROPIC_API_KEY'):
@@ -272,7 +277,8 @@ def save_config():
             'last_seen_void_id': last_seen_void_id,
             'last_cash_balance': last_cash_balance,
             'last_alerted_transaction_id': last_alerted_transaction_id,
-            'last_alerted_expense_id': last_alerted_expense_id
+            'last_alerted_expense_id': last_alerted_expense_id,
+            'monthly_goal': monthly_goal
         }
         # Preserve API keys and log level from existing config
         if existing_config.get('ANTHROPIC_API_KEY'):

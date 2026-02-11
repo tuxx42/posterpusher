@@ -535,7 +535,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/agent &lt;question&gt; - Ask AI about your data\n\n"
         "<b>📊 Dashboard:</b>\n"
         "/dashboard - Open web dashboard\n"
-        "/setpassword &lt;pw&gt; - Set dashboard password\n\n"
+        "/setpassword &lt;pw&gt; - Set dashboard password\n"
+        "/setgoal &lt;THB&gt; - Set monthly profit goal\n\n"
     )
 
     # Add admin commands if user is admin
@@ -2801,6 +2802,38 @@ async def setpassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
 
+@require_auth
+async def setgoal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /setgoal command - set monthly profit goal."""
+    if not context.args:
+        current = format_currency(config.monthly_goal) if config.monthly_goal else "not set"
+        await update.message.reply_text(
+            f"Usage: /setgoal &lt;amount_in_THB&gt;\n\n"
+            f"Sets your monthly gross profit goal.\n"
+            f"Example: <code>/setgoal 200000</code> for ฿200,000\n\n"
+            f"Current goal: {current}",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    try:
+        amount_thb = float(context.args[0].replace(',', ''))
+        if amount_thb <= 0:
+            await update.message.reply_text("Goal must be greater than 0.")
+            return
+    except ValueError:
+        await update.message.reply_text("Invalid amount. Example: /setgoal 200000")
+        return
+
+    config.monthly_goal = int(amount_thb * 100)  # Convert THB to satang
+    save_config()
+
+    await update.message.reply_text(
+        f"Monthly goal set to <b>{format_currency(config.monthly_goal)}</b>",
+        parse_mode=ParseMode.HTML
+    )
+
+
 async def startup(application):
     """Run startup tasks before polling begins."""
     logger.info("Running startup tasks...")
@@ -3060,6 +3093,7 @@ def main():
     application.add_handler(CommandHandler("agent", agent))
     application.add_handler(CommandHandler("dashboard", dashboard_cmd))
     application.add_handler(CommandHandler("setpassword", setpassword_cmd))
+    application.add_handler(CommandHandler("setgoal", setgoal_cmd))
 
     # Set up scheduler for background jobs
     scheduler = AsyncIOScheduler(timezone=THAI_TZ)

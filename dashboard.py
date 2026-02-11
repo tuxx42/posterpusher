@@ -599,6 +599,23 @@ async def page_dashboard(request: Request):
     feed_items.sort(key=lambda x: x["sort_time"], reverse=True)
     feed_items = feed_items[:40]
 
+    # Goal progress — calendar month to date
+    goal_progress = 0
+    goal_percent = 0
+    if config.monthly_goal > 0:
+        today = get_business_date()
+        month_start = today.replace(day=1).strftime('%Y%m%d')
+        month_end = today.strftime('%Y%m%d')
+        if month_start == today_str:
+            # Already have today's data
+            goal_progress = summary["total_profit"]
+        else:
+            month_txns = await _run_sync(fetch_transactions, month_start, month_end)
+            month_closed = _filter_closed_sales(month_txns)
+            month_summary = calculate_summary(month_closed)
+            goal_progress = month_summary["total_profit"]
+        goal_percent = goal_progress / config.monthly_goal * 100
+
     ws_host = get_dashboard_url()
     ws_url = ws_host.replace("http://", "ws://").replace("https://", "wss://") + "/ws/sales"
 
@@ -611,6 +628,9 @@ async def page_dashboard(request: Request):
         "feed_items": feed_items,
         "format_currency": format_currency,
         "ws_url": ws_url,
+        "monthly_goal": config.monthly_goal,
+        "goal_progress": goal_progress,
+        "goal_percent": goal_percent,
         "username": session["username"],
         "is_admin": session.get("is_admin", False),
     })
@@ -714,6 +734,10 @@ async def page_summary(
         })
     all_transactions.sort(key=lambda x: x["date"], reverse=True)
 
+    # Goal progress for viewed period
+    goal_progress = summary["total_profit"]
+    goal_percent = (goal_progress / config.monthly_goal * 100) if config.monthly_goal > 0 else 0
+
     return templates.TemplateResponse("summary.html", {
         "request": request,
         "active_page": "summary",
@@ -730,6 +754,9 @@ async def page_summary(
         "date_from_iso": date_from_iso,
         "date_to_iso": date_to_iso,
         "format_currency": format_currency,
+        "monthly_goal": config.monthly_goal,
+        "goal_progress": goal_progress,
+        "goal_percent": goal_percent,
         "username": session["username"],
         "is_admin": session.get("is_admin", False),
     })
