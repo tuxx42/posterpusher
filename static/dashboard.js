@@ -233,7 +233,7 @@ function renderPieChart(canvasId, labels, data) {
     });
 }
 
-function renderLineChart(canvasId, labels, datasets) {
+function renderTimeLineChart(canvasId, datasets) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -247,7 +247,7 @@ function renderLineChart(canvasId, labels, datasets) {
 
     return new Chart(ctx, {
         type: 'line',
-        data: { labels, datasets },
+        data: { datasets },
         options: {
             responsive: true,
             maintainAspectRatio: true,
@@ -263,7 +263,7 @@ function renderLineChart(canvasId, labels, datasets) {
                     cornerRadius: 8,
                     callbacks: {
                         label: function(context) {
-                            return ' ' + context.dataset.label + ': ' + formatCurrency(context.raw * 100);
+                            return ' ' + context.dataset.label + ': ' + formatCurrency(context.raw.y * 100);
                         }
                     }
                 },
@@ -271,7 +271,16 @@ function renderLineChart(canvasId, labels, datasets) {
             },
             scales: {
                 x: {
-                    ticks: { color: '#999' },
+                    type: 'time',
+                    time: {
+                        tooltipFormat: 'dd MMM HH:mm',
+                        displayFormats: {
+                            minute: 'HH:mm',
+                            hour: 'HH:mm',
+                            day: 'dd MMM',
+                        }
+                    },
+                    ticks: { color: '#999', maxTicksLimit: 12 },
                     grid: { color: 'rgba(255,255,255,0.05)' }
                 },
                 y: {

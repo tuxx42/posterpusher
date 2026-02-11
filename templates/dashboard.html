@@ -140,8 +140,7 @@
             runningMetrics.register += sale.payed_cash;
             // Update cash timeline chart
             if (cashChart) {
-                cashChart.data.labels.push(time);
-                cashChart.data.datasets[0].data.push(runningMetrics.register / 100);
+                cashChart.data.datasets[0].data.push({x: new Date().toISOString(), y: runningMetrics.register / 100});
                 cashChart.update();
             }
         }
@@ -151,11 +150,11 @@
     // Cash register timeline chart
     const cashTimelineData = {{ cash_timeline | safe }};
     let cashChart = null;
-    if (cashTimelineData && cashTimelineData.labels.length > 0) {
-        cashChart = renderLineChart('cashTimelineChart', cashTimelineData.labels, [
+    if (cashTimelineData && cashTimelineData.points.length > 0) {
+        cashChart = renderTimeLineChart('cashTimelineChart', [
             {
                 label: 'Cash in Register',
-                data: cashTimelineData.values.map(v => v / 100),
+                data: cashTimelineData.points.map(p => ({x: p.x, y: p.y / 100})),
                 borderColor: 'rgba(76, 175, 80, 0.9)',
                 backgroundColor: 'rgba(76, 175, 80, 0.1)',
                 fill: true

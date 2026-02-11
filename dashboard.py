@@ -299,19 +299,18 @@ def _build_cash_timeline(transactions, finance_txns):
     events.sort(key=lambda e: e["time"])
 
     balance = 0
-    labels = []
-    values = []
+    points = []
     for ev in events:
         balance += ev["amount"]
+        # Use ISO timestamp for Chart.js time scale
         t = ev["time"]
         if ' ' in t:
-            date_part, time_part = t.split(' ', 1)
-            labels.append(f"{date_part[5:]} {time_part[:5]}")
+            iso = t.replace(' ', 'T')
         else:
-            labels.append(t[5:] if len(t) >= 10 else t)
-        values.append(balance)
+            iso = t + "T00:00:00"
+        points.append({"x": iso, "y": balance})
 
-    return {"labels": labels, "values": values}
+    return {"points": points}
 
 
 def _build_hourly_by_weekday(transactions):
@@ -605,14 +604,17 @@ async def page_dashboard(request: Request):
     # Build cash register timeline (running balance over time)
     cash_timeline = _build_cash_timeline(closed, finance_txns)
     if cash_timeline and cash_register:
-        # Offset by shift opening balance
         opening = int(shifts[0].get('amount_start', 0) or 0)
-        cash_timeline["values"] = [v + opening for v in cash_timeline["values"]]
-        cash_timeline["labels"].insert(0, "Open")
-        cash_timeline["values"].insert(0, opening)
+        # Offset all points by shift opening balance
+        for p in cash_timeline["points"]:
+            p["y"] += opening
+        # Add opening point at shift start time
+        shift_start = adjust_poster_time(latest.get('date_start', ''))
+        open_iso = shift_start.replace(' ', 'T') if ' ' in shift_start else shift_start + "T00:00:00"
+        cash_timeline["points"].insert(0, {"x": open_iso, "y": opening})
         if cash_register["status"] == "Closed":
-            cash_timeline["labels"].append("Close")
-            cash_timeline["values"].append(cash_register["current_cash"])
+            close_iso = shift_end.replace(' ', 'T') if ' ' in shift_end else shift_end + "T00:00:00"
+            cash_timeline["points"].append({"x": close_iso, "y": cash_register["current_cash"]})
 
     # Pre-process sales for template
     sales_display = []
