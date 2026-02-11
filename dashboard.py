@@ -271,28 +271,44 @@ def _build_daily_breakdown(transactions):
     }
 
 
-def _build_cash_timeline(transactions):
-    """Build cumulative cash-from-sales timeline from transactions."""
+def _build_cash_timeline(transactions, finance_txns):
+    """Build cumulative cash timeline from sales and expenses."""
     from app import adjust_poster_time
 
-    cash_txns = sorted(
-        [t for t in transactions if int(t.get('payed_cash', 0) or 0) > 0],
-        key=lambda x: int(x.get('transaction_id', 0) or 0)
-    )
-    if not cash_txns:
+    # Collect cash-in events from sales
+    events = []
+    for txn in transactions:
+        payed_cash = int(txn.get('payed_cash', 0) or 0)
+        if payed_cash > 0:
+            close_time = adjust_poster_time(txn.get('date_close_date', ''))
+            events.append({"time": close_time, "amount": payed_cash})
+
+    # Collect cash-out events from expenses
+    for txn in finance_txns:
+        amount = int(txn.get('amount', 0) or 0)
+        comment = txn.get('comment', '')
+        if 'Cash payments' in comment:
+            continue
+        if amount < 0:
+            date_str = txn.get('date', '')
+            events.append({"time": date_str, "amount": amount})
+
+    if not events:
         return None
+
+    events.sort(key=lambda e: e["time"])
 
     balance = 0
     labels = []
     values = []
-    for txn in cash_txns:
-        balance += int(txn.get('payed_cash', 0) or 0)
-        close_time = adjust_poster_time(txn.get('date_close_date', ''))
-        if ' ' in close_time:
-            date_part, time_part = close_time.split(' ', 1)
+    for ev in events:
+        balance += ev["amount"]
+        t = ev["time"]
+        if ' ' in t:
+            date_part, time_part = t.split(' ', 1)
             labels.append(f"{date_part[5:]} {time_part[:5]}")
         else:
-            labels.append(close_time)
+            labels.append(t[5:] if len(t) >= 10 else t)
         values.append(balance)
 
     return {"labels": labels, "values": values}
@@ -557,10 +573,11 @@ async def page_dashboard(request: Request):
             "error": "Please run /dashboard in Telegram to get a login link."
         }, status_code=401)
 
-    from app import fetch_transactions, fetch_cash_shifts, get_business_date, adjust_poster_time, calculate_summary, format_currency
+    from app import fetch_transactions, fetch_finance_transactions, fetch_cash_shifts, get_business_date, adjust_poster_time, calculate_summary, format_currency
 
     today_str = get_business_date().strftime('%Y%m%d')
     transactions = await _run_sync(fetch_transactions, today_str)
+    finance_txns = await _run_sync(fetch_finance_transactions, today_str)
     closed = _filter_closed_sales(transactions)
     closed.sort(key=lambda x: int(x.get('transaction_id', 0) or 0), reverse=True)
     summary = calculate_summary(closed)
@@ -586,30 +603,16 @@ async def page_dashboard(request: Request):
         }
 
     # Build cash register timeline (running balance over time)
-    cash_timeline = None
-    if cash_register:
-        # Sort by transaction_id ascending (chronological)
-        cash_txns = sorted(closed, key=lambda x: int(x.get('transaction_id', 0) or 0))
+    cash_timeline = _build_cash_timeline(closed, finance_txns)
+    if cash_timeline and cash_register:
+        # Offset by shift opening balance
         opening = int(shifts[0].get('amount_start', 0) or 0)
-        cash_out = int(shifts[0].get('amount_credit', 0) or 0)
-        balance = opening - cash_out
-        timeline_labels = ["Open"]
-        timeline_values = [balance]
-        for txn in cash_txns:
-            payed_cash = int(txn.get('payed_cash', 0) or 0)
-            if payed_cash > 0:
-                balance += payed_cash
-                close_time = adjust_poster_time(txn.get('date_close_date', ''))
-                time_label = close_time.split(' ')[1][:5] if ' ' in close_time else ''
-                timeline_labels.append(time_label)
-                timeline_values.append(balance)
+        cash_timeline["values"] = [v + opening for v in cash_timeline["values"]]
+        cash_timeline["labels"].insert(0, "Open")
+        cash_timeline["values"].insert(0, opening)
         if cash_register["status"] == "Closed":
-            timeline_labels.append("Close")
-            timeline_values.append(cash_register["current_cash"])
-        cash_timeline = {
-            "labels": timeline_labels,
-            "values": timeline_values,
-        }
+            cash_timeline["labels"].append("Close")
+            cash_timeline["values"].append(cash_register["current_cash"])
 
     # Pre-process sales for template
     sales_display = []
@@ -706,7 +709,7 @@ async def page_summary(
 
     daily = _build_daily_breakdown(closed)
     hourly = _build_hourly_breakdown(closed)
-    cash_timeline = _build_cash_timeline(closed)
+    cash_timeline = _build_cash_timeline(closed, finance_txns)
 
     # Build expense-by-comment pie chart data
     from collections import defaultdict
