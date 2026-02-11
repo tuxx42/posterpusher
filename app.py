@@ -265,12 +265,12 @@ def adjust_poster_time(timestamp_str):
 
 
 def get_business_date():
-    """Get the current business date.
+    """Get the current business date in Bangkok time.
 
     For bars/restaurants that operate late, the business day doesn't end at midnight.
     If current time is before BUSINESS_DAY_CUTOFF_HOUR (2am), return yesterday's date.
     """
-    now = datetime.now()
+    now = datetime.now(THAI_TZ)
     if now.hour < BUSINESS_DAY_CUTOFF_HOUR:
         return (now - timedelta(days=1)).date()
     return now.date()
