@@ -48,6 +48,15 @@ const ZOOM_OPTIONS = {
     },
 };
 
+// Double-click/tap to reset zoom on any chart
+document.addEventListener('dblclick', function(e) {
+    var canvas = e.target.closest('canvas');
+    if (canvas) {
+        var chart = Chart.getChart(canvas);
+        if (chart) chart.resetZoom();
+    }
+});
+
 // Shared animation config
 const ANIMATION_OPTIONS = {
     duration: 800,
