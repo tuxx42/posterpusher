@@ -560,7 +560,7 @@ async def page_dashboard(request: Request):
 
     # Build cash register timeline (running balance over time)
     cash_timeline = None
-    if cash_register and cash_register["status"] == "Open":
+    if cash_register:
         # Sort by transaction_id ascending (chronological)
         cash_txns = sorted(closed, key=lambda x: int(x.get('transaction_id', 0) or 0))
         opening = int(shifts[0].get('amount_start', 0) or 0)
@@ -576,6 +576,9 @@ async def page_dashboard(request: Request):
                 time_label = close_time.split(' ')[1][:5] if ' ' in close_time else ''
                 timeline_labels.append(time_label)
                 timeline_values.append(balance)
+        if cash_register["status"] == "Closed":
+            timeline_labels.append("Close")
+            timeline_values.append(cash_register["current_cash"])
         cash_timeline = {
             "labels": timeline_labels,
             "values": timeline_values,
