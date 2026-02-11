@@ -2,7 +2,15 @@
 {% block title %}Summary - POS Dashboard{% endblock %}
 
 {% block content %}
+{% if period == 'custom' and date_from_iso and date_from_iso == date_to_iso %}
+<h4 style="display:flex; align-items:center; gap:0.5rem;">
+    <a href="/summary?period=custom&date_from={{ prev_day }}&date_to={{ prev_day }}" style="text-decoration:none; font-size:1.2rem; opacity:0.7;">&larr;</a>
+    Summary: {{ display }}
+    <a href="/summary?period=custom&date_from={{ next_day }}&date_to={{ next_day }}" style="text-decoration:none; font-size:1.2rem; opacity:0.7;">&rarr;</a>
+</h4>
+{% else %}
 <h4>Summary: {{ display }}</h4>
+{% endif %}
 
 <!-- Period navigation -->
 <div class="period-nav">

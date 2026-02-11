@@ -779,6 +779,14 @@ async def page_summary(
         adjusted_goal = config.monthly_goal * num_days / days_in_month
         goal_percent_adjusted = (goal_progress / adjusted_goal * 100) if adjusted_goal > 0 else 0
 
+    # Prev/next day links for single-day custom view
+    prev_day = ""
+    next_day = ""
+    if period == "custom" and date_from_iso and date_from_iso == date_to_iso:
+        single = datetime.strptime(date_from_iso, "%Y-%m-%d")
+        prev_day = (single - timedelta(days=1)).strftime("%Y-%m-%d")
+        next_day = (single + timedelta(days=1)).strftime("%Y-%m-%d")
+
     return templates.TemplateResponse("summary.html", {
         "request": request,
         "active_page": "summary",
@@ -794,6 +802,8 @@ async def page_summary(
         "cash_timeline": json.dumps(cash_timeline) if cash_timeline else "null",
         "date_from_iso": date_from_iso,
         "date_to_iso": date_to_iso,
+        "prev_day": prev_day,
+        "next_day": next_day,
         "format_currency": format_currency,
         "monthly_goal": config.monthly_goal,
         "goal_progress": goal_progress,
