@@ -57,6 +57,7 @@
                 <th data-sort="qty">Qty</th>
                 <th data-sort="revenue">Revenue</th>
                 <th data-sort="profit">Profit</th>
+                <th data-sort="margin">Margin</th>
             </tr>
         </thead>
         <tbody>
@@ -67,6 +68,8 @@
                 <td data-value="{{ p.count }}">{{ "%.0f" | format(p.count) }}</td>
                 <td data-value="{{ p.payed_sum }}">{{ format_currency(p.payed_sum) }}</td>
                 <td data-value="{{ p.product_profit }}">{{ format_currency(p.product_profit) }}</td>
+                {% set margin = (p.product_profit / p.payed_sum * 100) if p.payed_sum > 0 else 0 %}
+                <td data-value="{{ "%.1f"|format(margin) }}">{{ "%.0f"|format(margin) }}%</td>
             </tr>
             {% endfor %}
         </tbody>
