@@ -1009,6 +1009,107 @@ async def page_config(request: Request):
     })
 
 
+@dashboard_app.get("/expenses", response_class=HTMLResponse)
+async def page_expenses(
+    request: Request,
+    period: str = "month",
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+):
+    """Expenses breakdown page."""
+    session = check_basic_auth(request)
+    if session is None:
+        return _unauthorized_response()
+
+    from app import fetch_finance_transactions, calculate_expenses, format_currency, adjust_poster_time
+    from collections import defaultdict
+
+    date_from_iso = ""
+    date_to_iso = ""
+    date_from_api = ""
+    date_to_api = ""
+    display = ""
+
+    if period == "custom" and date_from and date_to:
+        try:
+            df = datetime.strptime(date_from, "%Y-%m-%d")
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            date_from_iso = date_from
+            date_to_iso = date_to
+            date_from_api = df.strftime("%Y%m%d")
+            date_to_api = dt.strftime("%Y%m%d")
+            display = f"{df.strftime('%d %b')} - {dt.strftime('%d %b %Y')}"
+        except ValueError:
+            period = "month"
+    else:
+        if period not in ("today", "week", "month"):
+            period = "month"
+
+    if period != "custom":
+        date_from_api, date_to_api, display = _get_date_range(period)
+
+    finance_txns = await _run_sync(fetch_finance_transactions, date_from_api, date_to_api)
+    expenses = calculate_expenses(finance_txns)
+
+    # Group by category
+    by_category = defaultdict(int)
+    for exp in expenses["expense_list"]:
+        label = exp.get("category") or "Uncategorized"
+        by_category[label] += exp["amount"]
+    sorted_categories = sorted(by_category.items(), key=lambda x: x[1], reverse=True)
+
+    # Group by comment (more granular)
+    by_comment = defaultdict(int)
+    for exp in expenses["expense_list"]:
+        label = exp.get("comment") or exp.get("category") or "Uncategorized"
+        by_comment[label] += exp["amount"]
+    sorted_comments = sorted(by_comment.items(), key=lambda x: x[1], reverse=True)
+
+    # Pie chart by category
+    category_pie = {
+        "labels": [c[0] for c in sorted_categories],
+        "values": [c[1] for c in sorted_categories],
+    } if sorted_categories else None
+
+    # Pie chart by comment
+    comment_pie = {
+        "labels": [c[0] for c in sorted_comments],
+        "values": [c[1] for c in sorted_comments],
+    } if sorted_comments else None
+
+    # Daily breakdown for bar chart
+    daily_expenses = defaultdict(int)
+    for exp in expenses["expense_list"]:
+        day = exp["date"].split(' ')[0] if ' ' in exp["date"] else exp["date"]
+        daily_expenses[day] += exp["amount"]
+    sorted_days = sorted(daily_expenses.items())
+    daily_chart = {
+        "labels": [d[0] for d in sorted_days],
+        "values": [d[1] for d in sorted_days],
+    } if sorted_days else None
+
+    # Expense list sorted by date (most recent first)
+    expense_list = sorted(expenses["expense_list"], key=lambda x: x["date"], reverse=True)
+
+    return templates.TemplateResponse("expenses.html", {
+        "request": request,
+        "active_page": "expenses",
+        "period": period,
+        "display": display,
+        "total_expenses": expenses["total_expenses"],
+        "expense_count": len(expenses["expense_list"]),
+        "expense_list": expense_list,
+        "category_pie": json.dumps(category_pie) if category_pie else "null",
+        "comment_pie": json.dumps(comment_pie) if comment_pie else "null",
+        "daily_chart": json.dumps(daily_chart) if daily_chart else "null",
+        "date_from_iso": date_from_iso,
+        "date_to_iso": date_to_iso,
+        "format_currency": format_currency,
+        "username": session["username"],
+        "is_admin": session.get("is_admin", False),
+    })
+
+
 @dashboard_app.get("/inventory", response_class=HTMLResponse)
 async def page_inventory(request: Request):
     """Inventory / stock levels page."""

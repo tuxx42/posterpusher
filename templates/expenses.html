@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Expenses - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>Expenses: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/expenses?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/expenses?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>Last 7 Days</a>
+    <a href="/expenses?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>Last 30 Days</a>
+    <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
+</div>
+<div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
+    <form method="get" action="/expenses" id="custom-range-form">
+        <input type="hidden" name="period" value="custom">
+        <input type="hidden" name="date_from" id="date_from" value="{{ date_from_iso or '' }}">
+        <input type="hidden" name="date_to" id="date_to" value="{{ date_to_iso or '' }}">
+        <input type="text" id="date-range-picker" placeholder="Select date range..." readonly required>
+        <button type="submit">Go</button>
+    </form>
+</div>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value">{{ format_currency(total_expenses) }}</p>
+        <p class="label">Total Expenses</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ expense_count }}</p>
+        <p class="label">Transactions</p>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="charts-grid">
+    {% if category_pie != "null" %}
+    <div class="card chart-container">
+        <h6>By Category</h6>
+        <canvas id="categoryPie"></canvas>
+    </div>
+    {% endif %}
+    {% if comment_pie != "null" %}
+    <div class="card chart-container">
+        <h6>By Description</h6>
+        <canvas id="commentPie"></canvas>
+    </div>
+    {% endif %}
+</div>
+
+{% if daily_chart != "null" %}
+<div class="card chart-container">
+    <h6>Daily Expenses</h6>
+    <canvas id="dailyChart"></canvas>
+</div>
+{% endif %}
+
+<!-- Expense table -->
+{% if expense_list %}
+<div class="card">
+    <table class="product-table sortable-table" role="grid">
+        <thead>
+            <tr>
+                <th data-sort="date">Date</th>
+                <th data-sort="category">Category</th>
+                <th data-sort="comment">Description</th>
+                <th data-sort="amount">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for exp in expense_list %}
+            <tr>
+                <td>{{ exp.date }}</td>
+                <td>{{ exp.category or '-' }}</td>
+                <td>{{ exp.comment or '-' }}</td>
+                <td data-value="{{ exp.amount }}">{{ format_currency(exp.amount) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p style="text-align:center; opacity:0.5;">No expenses for this period.</p>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const categoryPie = {{ category_pie | safe }};
+    const commentPie = {{ comment_pie | safe }};
+    const dailyChart = {{ daily_chart | safe }};
+
+    if (categoryPie && categoryPie.labels.length > 0) {
+        renderPieChart('categoryPie', categoryPie.labels, categoryPie.values.map(v => v / 100));
+    }
+
+    if (commentPie && commentPie.labels.length > 0) {
+        renderPieChart('commentPie', commentPie.labels, commentPie.values.map(v => v / 100));
+    }
+
+    if (dailyChart && dailyChart.labels.length > 0) {
+        renderBarChart('dailyChart', dailyChart.labels, [
+            { label: 'Expenses', data: dailyChart.values.map(v => v / 100), backgroundColor: 'rgba(244, 67, 54, 0.7)' }
+        ]);
+    }
+
+    // Flatpickr date range picker
+    const dfVal = document.getElementById('date_from').value;
+    const dtVal = document.getElementById('date_to').value;
+    const fp = flatpickr('#date-range-picker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: (dfVal && dtVal) ? [dfVal, dtVal] : [],
+        onChange: function(selectedDates) {
+            if (selectedDates.length === 2) {
+                const fmt = d => d.toISOString().slice(0, 10);
+                document.getElementById('date_from').value = fmt(selectedDates[0]);
+                document.getElementById('date_to').value = fmt(selectedDates[1]);
+            }
+        }
+    });
+
+    document.getElementById('custom-toggle').addEventListener('click', function(e) {
+        e.preventDefault();
+        const panel = document.getElementById('custom-range');
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'flex';
+        if (!visible) fp.open();
+    });
+</script>
+{% endblock %}
