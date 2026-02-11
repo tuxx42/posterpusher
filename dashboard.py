@@ -6,6 +6,7 @@ import os
 import json
 import asyncio
 import base64
+import calendar
 import hashlib
 import logging
 from datetime import datetime, timedelta
@@ -631,6 +632,7 @@ async def page_dashboard(request: Request):
     # Goal progress — calendar month to date
     goal_progress = 0
     goal_percent = 0
+    goal_percent_adjusted = 0
     if config.monthly_goal > 0:
         today = get_business_date()
         month_start = today.replace(day=1).strftime('%Y%m%d')
@@ -644,6 +646,10 @@ async def page_dashboard(request: Request):
             month_summary = calculate_summary(month_closed)
             goal_progress = month_summary["total_profit"]
         goal_percent = goal_progress / config.monthly_goal * 100
+        days_elapsed = today.day
+        days_in_month = calendar.monthrange(today.year, today.month)[1]
+        adjusted_goal = config.monthly_goal * days_elapsed / days_in_month
+        goal_percent_adjusted = (goal_progress / adjusted_goal * 100) if adjusted_goal > 0 else 0
 
     ws_host = get_dashboard_url()
     ws_url = ws_host.replace("http://", "ws://").replace("https://", "wss://") + "/ws/sales"
@@ -660,6 +666,7 @@ async def page_dashboard(request: Request):
         "monthly_goal": config.monthly_goal,
         "goal_progress": goal_progress,
         "goal_percent": goal_percent,
+        "goal_percent_adjusted": goal_percent_adjusted,
         "username": session["username"],
         "is_admin": session.get("is_admin", False),
     })
@@ -752,6 +759,25 @@ async def page_summary(
     # Goal progress for viewed period
     goal_progress = summary["total_profit"]
     goal_percent = (goal_progress / config.monthly_goal * 100) if config.monthly_goal > 0 else 0
+    goal_percent_adjusted = 0
+    if config.monthly_goal > 0:
+        from app import get_business_date
+        today = get_business_date()
+        days_in_month = calendar.monthrange(today.year, today.month)[1]
+        if period == "today":
+            num_days = 1
+        elif period == "week":
+            num_days = 7
+        elif period == "month":
+            num_days = 30
+        elif period == "custom" and date_from_api and date_to_api:
+            df = datetime.strptime(date_from_api, "%Y%m%d")
+            dt = datetime.strptime(date_to_api, "%Y%m%d")
+            num_days = (dt - df).days + 1
+        else:
+            num_days = 1
+        adjusted_goal = config.monthly_goal * num_days / days_in_month
+        goal_percent_adjusted = (goal_progress / adjusted_goal * 100) if adjusted_goal > 0 else 0
 
     return templates.TemplateResponse("summary.html", {
         "request": request,
@@ -772,6 +798,7 @@ async def page_summary(
         "monthly_goal": config.monthly_goal,
         "goal_progress": goal_progress,
         "goal_percent": goal_percent,
+        "goal_percent_adjusted": goal_percent_adjusted,
         "username": session["username"],
         "is_admin": session.get("is_admin", False),
     })

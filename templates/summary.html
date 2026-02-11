@@ -53,9 +53,9 @@
     </div>
     {% if monthly_goal > 0 %}
     <div class="card metric">
-        <p class="value" style="color: {{ '#4CAF50' if goal_percent >= 100 else '#FF9800' if goal_percent >= 75 else '#f44336' }}">{{ "%.0f"|format(goal_percent) }}%</p>
-        <p class="label">Goal</p>
-        <p style="font-size:0.75rem; opacity:0.7; margin:0">{{ format_currency(goal_progress) }} / {{ format_currency(monthly_goal) }}</p>
+        <p class="value" style="color: {{ '#4CAF50' if goal_percent_adjusted >= 100 else '#FF9800' if goal_percent_adjusted >= 75 else '#f44336' }}">{{ "%.0f"|format(goal_percent_adjusted) }}%</p>
+        <p class="label">Goal (pace)</p>
+        <p style="font-size:0.75rem; opacity:0.7; margin:0">{{ "%.0f"|format(goal_percent) }}% overall · {{ format_currency(goal_progress) }} / {{ format_currency(monthly_goal) }}</p>
     </div>
     {% endif %}
 </div>
