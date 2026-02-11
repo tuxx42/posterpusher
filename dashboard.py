@@ -763,6 +763,25 @@ async def page_summary(
         "values": [c[1] for c in sorted_cats],
     } if sorted_cats else None
 
+    # Build merged transactions list (sales + expenses) sorted by date
+    all_transactions = []
+    for txn in closed:
+        close_time = adjust_poster_time(txn.get('date_close_date', ''))
+        all_transactions.append({
+            "type": "sale",
+            "date": close_time,
+            "description": txn.get('table_name', '') or "Sale",
+            "amount": int(txn.get('sum', 0) or 0),
+        })
+    for exp in expenses["expense_list"]:
+        all_transactions.append({
+            "type": "expense",
+            "date": exp["date"],
+            "description": exp.get("comment") or exp.get("category") or "Expense",
+            "amount": exp["amount"],
+        })
+    all_transactions.sort(key=lambda x: x["date"], reverse=True)
+
     return templates.TemplateResponse("summary.html", {
         "request": request,
         "active_page": "summary",
@@ -770,6 +789,7 @@ async def page_summary(
         "display": display,
         "summary": summary,
         "expenses": expenses,
+        "all_transactions": all_transactions,
         "net_profit": summary["total_sales"] - expenses["total_expenses"],
         "daily_data": json.dumps(daily),
         "hourly_data": json.dumps(hourly) if hourly else "null",

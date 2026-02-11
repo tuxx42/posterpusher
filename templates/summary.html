@@ -79,25 +79,29 @@
     {% endif %}
 </div>
 
-{% if expenses.expense_list %}
+{% if all_transactions %}
 <div class="card">
-    <h6>Expenses</h6>
-    <table class="product-table sortable-table" id="expenses-table" role="grid">
+    <h6>Transactions</h6>
+    <table class="product-table sortable-table" id="transactions-table" role="grid">
         <thead>
             <tr>
                 <th data-sort="date">Date</th>
-                <th data-sort="category">Category</th>
-                <th data-sort="comment">Comment</th>
+                <th data-sort="type">Type</th>
+                <th data-sort="description">Description</th>
                 <th data-sort="amount">Amount</th>
             </tr>
         </thead>
         <tbody>
-            {% for exp in expenses.expense_list %}
+            {% for txn in all_transactions %}
             <tr>
-                <td data-value="{{ exp.date }}">{{ exp.date }}</td>
-                <td>{{ exp.category or 'Uncategorized' }}</td>
-                <td>{{ exp.comment }}</td>
-                <td data-value="{{ exp.amount }}" style="color: #f44336; text-align: right;">-{{ format_currency(exp.amount) }}</td>
+                <td data-value="{{ txn.date }}">{{ txn.date }}</td>
+                <td>{{ txn.type | capitalize }}</td>
+                <td>{{ txn.description }}</td>
+                {% if txn.type == 'expense' %}
+                <td data-value="-{{ txn.amount }}" style="color: #f44336; text-align: right;">-{{ format_currency(txn.amount) }}</td>
+                {% else %}
+                <td data-value="{{ txn.amount }}" style="color: #4CAF50; text-align: right;">{{ format_currency(txn.amount) }}</td>
+                {% endif %}
             </tr>
             {% endfor %}
         </tbody>
