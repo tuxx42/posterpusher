@@ -232,10 +232,19 @@ LARGE_REFUND_THRESHOLD = 50000  # Alert if refund > 500 THB (in cents)
 LARGE_EXPENSE_THRESHOLD = 100000  # Alert if single expense > 1000 THB (in cents)
 
 
-def format_currency(amount_in_cents):
+def format_currency(amount_in_cents, short=False):
     """Format amount from cents to THB."""
     try:
         amount = float(amount_in_cents) / 100
+        if short:
+            abs_amount = abs(amount)
+            sign = "-" if amount < 0 else ""
+            if abs_amount >= 1_000_000:
+                return f"฿{sign}{abs_amount / 1_000_000:.1f}M"
+            elif abs_amount >= 1_000:
+                return f"฿{sign}{abs_amount / 1_000:.1f}k"
+            else:
+                return f"฿{sign}{abs_amount:,.0f}"
         return f"฿{amount:,.2f}"
     except (ValueError, TypeError):
         return "฿0.00"
