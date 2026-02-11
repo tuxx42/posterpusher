@@ -45,25 +45,40 @@
 </div>
 {% endif %}
 
-<!-- Sales feed -->
+<!-- Sales & expenses feed -->
 <div class="card">
     <div id="sales-feed">
-        {% for sale in sales %}
-        <div class="sale-item" data-txn-id="{{ sale.transaction_id }}">
+        {% for item in feed_items %}
+        {% if item.type == 'sale' %}
+        <div class="sale-item" data-txn-id="{{ item.transaction_id }}">
             <div class="sale-left">
-                <strong>{{ sale.time }}</strong>
-                {% if sale.table_name %}<span class="sale-meta"> &middot; {{ sale.table_name }}</span>{% endif %}
+                <strong>{{ item.time }}</strong>
+                {% if item.table_name %}<span class="sale-meta"> &middot; {{ item.table_name }}</span>{% endif %}
                 <br>
-                <span class="sale-meta {{ sale.payment_class }}">{{ sale.payment }}</span>
+                <span class="sale-meta {{ item.payment_class }}">{{ item.payment }}</span>
             </div>
             <div class="sale-right">
-                <div class="sale-amount">{{ sale.amount }}</div>
-                <div class="sale-meta">Profit: {{ sale.profit }}</div>
+                <div class="sale-amount">{{ item.amount }}</div>
+                <div class="sale-meta">Profit: {{ item.profit }}</div>
             </div>
         </div>
+        {% elif item.type == 'expense' %}
+        <div class="sale-item">
+            <div class="sale-left">
+                <strong>{{ item.time }}</strong>
+                {% if item.comment %}<span class="sale-meta"> &middot; {{ item.comment }}</span>{% endif %}
+                <br>
+                <span class="sale-meta" style="color: #f44336;">Expense</span>
+                {% if item.category %}<span class="sale-meta"> &middot; {{ item.category }}</span>{% endif %}
+            </div>
+            <div class="sale-right">
+                <div class="sale-amount" style="color: #f44336;">-{{ item.amount }}</div>
+            </div>
+        </div>
+        {% endif %}
         {% endfor %}
-        {% if not sales %}
-        <p style="text-align:center; opacity:0.5;">No sales today yet.</p>
+        {% if not feed_items %}
+        <p style="text-align:center; opacity:0.5;">No activity today yet.</p>
         {% endif %}
     </div>
 </div>

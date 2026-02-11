@@ -617,9 +617,12 @@ async def page_dashboard(request: Request):
             cash_timeline["points"].append({"x": close_iso, "y": cash_register["current_cash"]})
         cash_timeline["points"].sort(key=lambda p: p["x"])
 
-    # Pre-process sales for template
-    sales_display = []
-    for txn in closed[:30]:
+    # Pre-process sales and expenses for merged feed
+    from app import calculate_expenses
+    expenses = calculate_expenses(finance_txns)
+
+    feed_items = []
+    for txn in closed:
         close_time = adjust_poster_time(txn.get('date_close_date', ''))
         time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
         payed_cash = int(txn.get('payed_cash', 0) or 0)
@@ -635,7 +638,9 @@ async def page_dashboard(request: Request):
             payment = "Cash"
             payment_class = "badge-cash"
 
-        sales_display.append({
+        feed_items.append({
+            "type": "sale",
+            "sort_time": close_time,
             "transaction_id": int(txn.get('transaction_id', 0) or 0),
             "time": time_str,
             "amount": format_currency(int(txn.get('sum', 0) or 0)),
@@ -644,6 +649,21 @@ async def page_dashboard(request: Request):
             "payment": payment,
             "payment_class": payment_class,
         })
+
+    for exp in expenses["expense_list"]:
+        exp_date = exp.get('date', '')
+        time_str = exp_date.split(' ')[1][:5] if ' ' in exp_date else ''
+        feed_items.append({
+            "type": "expense",
+            "sort_time": exp_date,
+            "time": time_str,
+            "amount": format_currency(exp["amount"]),
+            "comment": exp.get("comment", ""),
+            "category": exp.get("category", ""),
+        })
+
+    feed_items.sort(key=lambda x: x["sort_time"], reverse=True)
+    feed_items = feed_items[:40]
 
     ws_host = get_dashboard_url()
     ws_url = ws_host.replace("http://", "ws://").replace("https://", "wss://") + "/ws/sales"
@@ -654,7 +674,7 @@ async def page_dashboard(request: Request):
         "summary": summary,
         "cash_register": cash_register,
         "cash_timeline": json.dumps(cash_timeline) if cash_timeline else "null",
-        "sales": sales_display,
+        "feed_items": feed_items,
         "format_currency": format_currency,
         "ws_url": ws_url,
         "username": session["username"],
