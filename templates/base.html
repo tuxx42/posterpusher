@@ -138,5 +138,93 @@
     <footer>POS Dashboard</footer>
     <script src="/static/dashboard.js"></script>
     {% block extra_scripts %}{% endblock %}
+    <script>
+    (function() {
+        function isLocalLink(a) {
+            return a.hostname === location.hostname && !a.hash && a.target !== '_blank';
+        }
+
+        function destroyCharts() {
+            Object.values(Chart.instances || {}).forEach(function(c) { c.destroy(); });
+        }
+
+        function swap(html) {
+            var doc = new DOMParser().parseFromString(html, 'text/html');
+            // Swap title
+            document.title = doc.title;
+            // Swap nav (updates active link)
+            var newNav = doc.querySelector('nav');
+            if (newNav) document.querySelector('nav').innerHTML = newNav.innerHTML;
+            // Destroy existing charts before removing canvases
+            destroyCharts();
+            // Swap main content
+            var newMain = doc.querySelector('main');
+            if (newMain) document.querySelector('main').innerHTML = newMain.innerHTML;
+            // Remove old page-specific head styles
+            document.querySelectorAll('style[data-spa]').forEach(function(s) { s.remove(); });
+            // Inject new page-specific head styles
+            var newHead = doc.querySelectorAll('head style:not(:first-of-type)');
+            newHead.forEach(function(s) {
+                var clone = document.createElement('style');
+                clone.setAttribute('data-spa', '');
+                clone.textContent = s.textContent;
+                document.head.appendChild(clone);
+            });
+            // Remove old page-specific head scripts (marked.js etc)
+            document.querySelectorAll('script[data-spa]').forEach(function(s) { s.remove(); });
+            // Inject new page-specific head scripts
+            var newHeadScripts = doc.querySelectorAll('head script:not([src*="chart.js"]):not([src*="flatpickr"]):not([src*="hammerjs"]):not([src*="chartjs-"]):not([src*="adapter"])');
+            newHeadScripts.forEach(function(s) {
+                if (!s.src) return;
+                // Skip if already loaded
+                if (document.querySelector('script[src="' + s.src + '"]')) return;
+                var clone = document.createElement('script');
+                clone.src = s.src;
+                clone.setAttribute('data-spa', '');
+                document.head.appendChild(clone);
+            });
+            // Execute new page scripts (inline scripts after </main>)
+            var scripts = doc.querySelectorAll('body script:not([src])');
+            // Skip the SPA script itself (last body script) and dashboard.js
+            scripts.forEach(function(s) {
+                if (s.textContent.indexOf('isLocalLink') !== -1) return;
+                var exec = document.createElement('script');
+                exec.textContent = s.textContent;
+                document.body.appendChild(exec);
+                exec.remove();
+            });
+            window.scrollTo(0, 0);
+        }
+
+        function navigate(url, pushState) {
+            // Show loading state
+            document.querySelector('main').style.opacity = '0.5';
+            fetch(url, { headers: { 'Accept': 'text/html' } })
+                .then(function(r) { return r.text(); })
+                .then(function(html) {
+                    swap(html);
+                    if (pushState) history.pushState({}, '', url);
+                })
+                .catch(function() {
+                    location.href = url; // Fallback to full navigation
+                });
+        }
+
+        // Intercept clicks on nav links and period-nav links
+        document.addEventListener('click', function(e) {
+            var a = e.target.closest('a');
+            if (!a || !isLocalLink(a)) return;
+            // Skip custom-toggle and clear-btn links
+            if (a.id === 'custom-toggle' || a.id === 'clear-btn') return;
+            e.preventDefault();
+            navigate(a.href, true);
+        });
+
+        // Handle back/forward
+        window.addEventListener('popstate', function() {
+            navigate(location.href, false);
+        });
+    })();
+    </script>
 </body>
 </html>
