@@ -769,7 +769,7 @@ async def page_summary(
             num_days = (dt - df).days + 1
         else:
             num_days = 1
-        goal_adjusted = config.monthly_goal * num_days / days_in_month
+        goal_adjusted = min(config.monthly_goal, config.monthly_goal * num_days / days_in_month)
         goal_percent_adjusted = (goal_progress / goal_adjusted * 100) if goal_adjusted > 0 else 0
 
     # Prev/next day links for single-day custom view
