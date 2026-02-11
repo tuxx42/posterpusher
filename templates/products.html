@@ -30,21 +30,21 @@
 <!-- Charts -->
 <div class="charts-grid">
     <div class="card chart-container">
-        <h6>Top Products by Revenue</h6>
-        <canvas id="productsBarChart"></canvas>
-    </div>
-    <div class="card chart-container">
         <h6>Revenue Distribution</h6>
         <canvas id="productsPieChart"></canvas>
     </div>
+    {% if category_data != "null" %}
+    <div class="card chart-container">
+        <h6>Revenue by Category</h6>
+        <canvas id="categoryPieChart"></canvas>
+    </div>
+    {% endif %}
 </div>
 
-{% if category_data != "null" %}
 <div class="card chart-container">
-    <h6>Revenue by Category</h6>
-    <canvas id="categoryPieChart"></canvas>
+    <h6>Products by Revenue</h6>
+    <canvas id="productsBarChart"></canvas>
 </div>
-{% endif %}
 
 <!-- Product table -->
 {% if products %}

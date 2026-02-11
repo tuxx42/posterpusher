@@ -907,8 +907,6 @@ async def page_products(request: Request, period: str = "today"):
     product_list.sort(key=lambda x: x["payed_sum"], reverse=True)
 
     # Chart data
-    top_10 = product_list[:10]
-
     # Dynamic pie cutoff: keep adding products until "Other" is ≤ 15% of total
     pie_cutoff = min(len(product_list), 8)
     if total_revenue > 0:
@@ -928,9 +926,9 @@ async def page_products(request: Request, period: str = "today"):
         pie_values.append(other_revenue)
 
     bar_data = {
-        "labels": [p["product_name"] for p in top_10],
-        "revenue": [p["payed_sum"] for p in top_10],
-        "profit": [p["product_profit"] for p in top_10],
+        "labels": [p["product_name"] for p in product_list],
+        "revenue": [p["payed_sum"] for p in product_list],
+        "profit": [p["product_profit"] for p in product_list],
     }
     pie_data = {"labels": pie_labels, "values": pie_values}
 
