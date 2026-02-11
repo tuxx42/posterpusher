@@ -675,7 +675,7 @@ async def page_summary(
             "error": "Please run /dashboard in Telegram to get a login link."
         }, status_code=401)
 
-    from app import fetch_transactions, fetch_finance_transactions, calculate_summary, calculate_expenses, format_currency
+    from app import fetch_transactions, fetch_finance_transactions, fetch_cash_shifts, adjust_poster_time, calculate_summary, calculate_expenses, format_currency
 
     date_from_iso = ""
     date_to_iso = ""
@@ -712,6 +712,21 @@ async def page_summary(
     daily = _build_daily_breakdown(closed)
     hourly = _build_hourly_breakdown(closed)
     cash_timeline = _build_cash_timeline(closed, finance_txns)
+
+    # Add shift opening balance to cash timeline
+    shifts = await _run_sync(fetch_cash_shifts)
+    if cash_timeline and shifts:
+        # Find shifts that overlap with the selected date range
+        for shift in shifts:
+            shift_start = adjust_poster_time(shift.get('date_start', ''))
+            opening = int(shift.get('amount_start', 0) or 0)
+            if opening > 0:
+                # Offset all points by opening balance
+                for p in cash_timeline["points"]:
+                    p["y"] += opening
+                open_iso = shift_start.replace(' ', 'T') if ' ' in shift_start else shift_start + "T00:00:00"
+                cash_timeline["points"].insert(0, {"x": open_iso, "y": opening})
+                break
 
     # Build expense-by-comment pie chart data
     from collections import defaultdict
