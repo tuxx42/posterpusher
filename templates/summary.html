@@ -71,6 +71,12 @@
         <canvas id="expensePieChart"></canvas>
     </div>
     {% endif %}
+    {% if cash_timeline != "null" %}
+    <div class="card chart-container">
+        <h6>Cash in Register</h6>
+        <canvas id="cashTimelineChart"></canvas>
+    </div>
+    {% endif %}
 </div>
 
 {% if expenses.expense_list %}
@@ -105,6 +111,7 @@
     const dailyData = {{ daily_data | safe }};
     const hourlyData = {{ hourly_data | safe }};
     const expensePieData = {{ expense_pie_data | safe }};
+    const cashTimelineData = {{ cash_timeline | safe }};
 
     // Daily breakdown chart
     if (dailyData && dailyData.labels.length > 0) {
@@ -133,6 +140,19 @@
     // Expense breakdown pie chart
     if (expensePieData && expensePieData.labels.length > 0) {
         renderPieChart('expensePieChart', expensePieData.labels, expensePieData.values.map(v => v / 100));
+    }
+
+    // Cash in register timeline
+    if (cashTimelineData && cashTimelineData.labels.length > 0) {
+        renderLineChart('cashTimelineChart', cashTimelineData.labels, [
+            {
+                label: 'Cash in Register',
+                data: cashTimelineData.values.map(v => v / 100),
+                borderColor: 'rgba(76, 175, 80, 0.9)',
+                backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                fill: true
+            }
+        ]);
     }
 
     // Flatpickr date range picker

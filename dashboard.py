@@ -271,6 +271,33 @@ def _build_daily_breakdown(transactions):
     }
 
 
+def _build_cash_timeline(transactions):
+    """Build cumulative cash-from-sales timeline from transactions."""
+    from app import adjust_poster_time
+
+    cash_txns = sorted(
+        [t for t in transactions if int(t.get('payed_cash', 0) or 0) > 0],
+        key=lambda x: int(x.get('transaction_id', 0) or 0)
+    )
+    if not cash_txns:
+        return None
+
+    balance = 0
+    labels = []
+    values = []
+    for txn in cash_txns:
+        balance += int(txn.get('payed_cash', 0) or 0)
+        close_time = adjust_poster_time(txn.get('date_close_date', ''))
+        if ' ' in close_time:
+            date_part, time_part = close_time.split(' ', 1)
+            labels.append(f"{date_part[5:]} {time_part[:5]}")
+        else:
+            labels.append(close_time)
+        values.append(balance)
+
+    return {"labels": labels, "values": values}
+
+
 def _build_hourly_by_weekday(transactions):
     """Group transactions by day-of-week and hour for Chart.js."""
     from app import adjust_poster_time
@@ -679,6 +706,7 @@ async def page_summary(
 
     daily = _build_daily_breakdown(closed)
     hourly = _build_hourly_breakdown(closed)
+    cash_timeline = _build_cash_timeline(closed)
 
     # Build expense-by-comment pie chart data
     from collections import defaultdict
@@ -704,6 +732,7 @@ async def page_summary(
         "daily_data": json.dumps(daily),
         "hourly_data": json.dumps(hourly) if hourly else "null",
         "expense_pie_data": json.dumps(expense_pie) if expense_pie else "null",
+        "cash_timeline": json.dumps(cash_timeline) if cash_timeline else "null",
         "date_from_iso": date_from_iso,
         "date_to_iso": date_to_iso,
         "format_currency": format_currency,
