@@ -1010,18 +1010,31 @@ async def page_config(request: Request):
 
 
 @dashboard_app.get("/voids", response_class=HTMLResponse)
-async def page_voids(
+async def page_voids_redirect(request: Request, period: str = "month", date_from: str = Query(None), date_to: str = Query(None)):
+    """Redirect old /voids URL to /alerts."""
+    from fastapi.responses import RedirectResponse
+    params = request.query_params
+    qs = f"?{params}" if params else ""
+    return RedirectResponse(url=f"/alerts{qs}", status_code=301)
+
+
+@dashboard_app.get("/alerts", response_class=HTMLResponse)
+async def page_alerts(
     request: Request,
     period: str = "month",
     date_from: str = Query(None),
     date_to: str = Query(None),
 ):
-    """Voided/removed transactions page."""
+    """Suspicious activity / alerts page."""
     session = check_basic_auth(request)
     if session is None:
         return _unauthorized_response()
 
-    from app import fetch_removed_transactions, adjust_poster_time, format_currency
+    from app import (
+        fetch_removed_transactions, fetch_transactions, fetch_finance_transactions,
+        fetch_cash_shifts, calculate_expenses, adjust_poster_time, format_currency,
+        LARGE_DISCOUNT_THRESHOLD, LARGE_EXPENSE_THRESHOLD,
+    )
     from collections import defaultdict
 
     date_from_iso = ""
@@ -1048,49 +1061,190 @@ async def page_voids(
     if period != "custom":
         date_from_api, date_to_api, display = _get_date_range(period)
 
+    # Fetch all data sources in parallel
     removed = await _run_sync(fetch_removed_transactions, date_from_api, date_to_api)
+    transactions = await _run_sync(fetch_transactions, date_from_api, date_to_api)
+    finance_txns = await _run_sync(fetch_finance_transactions, date_from_api, date_to_api)
+    shifts = await _run_sync(fetch_cash_shifts)
 
-    # Process voided transactions
-    total_lost = 0
+    # --- 1. Voided transactions ---
     void_list = []
-    daily_voids = defaultdict(lambda: {"count": 0, "amount": 0})
-
+    total_void_loss = 0
     for txn in removed:
         amount = int(txn.get('sum', 0) or 0)
-        total_lost += amount
+        total_void_loss += amount
         close_time = adjust_poster_time(txn.get('date_close_date', ''))
-        day = close_time.split(' ')[0] if ' ' in close_time else close_time
         time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
-
-        daily_voids[day]["count"] += 1
-        daily_voids[day]["amount"] += amount
-
         void_list.append({
             "transaction_id": int(txn.get('transaction_id', 0) or 0),
             "date": close_time,
             "time": time_str,
             "amount": amount,
             "table_name": txn.get('table_name', ''),
+            "staff": txn.get('name', ''),
         })
-
     void_list.sort(key=lambda x: x["date"], reverse=True)
 
-    # Daily chart
-    sorted_days = sorted(daily_voids.items())
+    # --- 2. Zero-payment sales (closed with no payment) ---
+    zero_payment_list = []
+    for txn in transactions:
+        status = str(txn.get('status', ''))
+        total = int(txn.get('sum', 0) or 0)
+        payed_sum = int(txn.get('payed_sum', 0) or 0)
+        if status == '2' and total > 0 and payed_sum == 0:
+            close_time = adjust_poster_time(txn.get('date_close_date', ''))
+            time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
+            zero_payment_list.append({
+                "transaction_id": int(txn.get('transaction_id', 0) or 0),
+                "date": close_time,
+                "time": time_str,
+                "amount": total,
+                "table_name": txn.get('table_name', ''),
+                "staff": txn.get('name', ''),
+            })
+    zero_payment_list.sort(key=lambda x: x["date"], reverse=True)
+
+    # --- 3. Underpayments (paid less than order total) ---
+    underpayment_list = []
+    for txn in transactions:
+        status = str(txn.get('status', ''))
+        total = int(txn.get('sum', 0) or 0)
+        payed_sum = int(txn.get('payed_sum', 0) or 0)
+        if status == '2' and total > 0 and 0 < payed_sum < total:
+            close_time = adjust_poster_time(txn.get('date_close_date', ''))
+            time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
+            shortage = total - payed_sum
+            underpayment_list.append({
+                "transaction_id": int(txn.get('transaction_id', 0) or 0),
+                "date": close_time,
+                "time": time_str,
+                "amount": total,
+                "paid": payed_sum,
+                "shortage": shortage,
+                "table_name": txn.get('table_name', ''),
+                "staff": txn.get('name', ''),
+            })
+    underpayment_list.sort(key=lambda x: x["date"], reverse=True)
+
+    # --- 4. Large discounts (>20%) ---
+    discount_list = []
+    for txn in transactions:
+        total = int(txn.get('sum', 0) or 0)
+        discount = int(txn.get('discount', 0) or 0)
+        if total > 0 and discount > 0:
+            original = total + discount
+            discount_pct = (discount / original) * 100
+            if discount_pct > LARGE_DISCOUNT_THRESHOLD:
+                close_time = adjust_poster_time(txn.get('date_close_date', ''))
+                time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
+                discount_list.append({
+                    "transaction_id": int(txn.get('transaction_id', 0) or 0),
+                    "date": close_time,
+                    "time": time_str,
+                    "original": original,
+                    "discount": discount,
+                    "discount_pct": discount_pct,
+                    "final_amount": total,
+                    "table_name": txn.get('table_name', ''),
+                    "staff": txn.get('name', ''),
+                })
+    discount_list.sort(key=lambda x: x["date"], reverse=True)
+
+    # --- 5. Cash register discrepancies (>100 THB) ---
+    cash_discrepancy_list = []
+    if shifts:
+        for shift in shifts:
+            if not shift.get('date_end'):
+                continue
+            amount_start = int(shift.get('amount_start', 0) or 0)
+            cash_sales = int(shift.get('amount_sell_cash', 0) or 0)
+            cash_out = int(shift.get('amount_credit', 0) or 0)
+            expected = amount_start + cash_sales - cash_out
+            actual = int(shift.get('amount_end', 0) or 0)
+            discrepancy = actual - expected
+
+            if abs(discrepancy) > 10000:  # > 100 THB
+                shift_start = adjust_poster_time(shift.get('date_start', ''))
+                shift_end = adjust_poster_time(shift.get('date_end', ''))
+                cash_discrepancy_list.append({
+                    "shift_start": shift_start,
+                    "shift_end": shift_end,
+                    "expected": expected,
+                    "actual": actual,
+                    "discrepancy": discrepancy,
+                    "is_shortage": discrepancy < 0,
+                    "staff": shift.get('comment', ''),
+                })
+    cash_discrepancy_list.sort(key=lambda x: x["shift_end"], reverse=True)
+
+    # --- 6. Large expenses (>1000 THB) ---
+    expenses_data = calculate_expenses(finance_txns)
+    large_expense_list = []
+    for exp in expenses_data["expense_list"]:
+        if exp["amount"] >= LARGE_EXPENSE_THRESHOLD:
+            large_expense_list.append({
+                "date": exp["date"],
+                "amount": exp["amount"],
+                "comment": exp.get("comment") or "-",
+                "category": exp.get("category") or "-",
+            })
+    large_expense_list.sort(key=lambda x: x["date"], reverse=True)
+
+    # --- Summary counts ---
+    total_alerts = (
+        len(void_list) + len(zero_payment_list) + len(underpayment_list)
+        + len(discount_list) + len(cash_discrepancy_list) + len(large_expense_list)
+    )
+
+    # --- Daily chart (all alerts combined) ---
+    daily_alerts = defaultdict(lambda: {"count": 0, "amount": 0})
+    for v in void_list:
+        day = v["date"].split(' ')[0] if ' ' in v["date"] else v["date"]
+        daily_alerts[day]["count"] += 1
+        daily_alerts[day]["amount"] += v["amount"]
+    for z in zero_payment_list:
+        day = z["date"].split(' ')[0] if ' ' in z["date"] else z["date"]
+        daily_alerts[day]["count"] += 1
+        daily_alerts[day]["amount"] += z["amount"]
+    for u in underpayment_list:
+        day = u["date"].split(' ')[0] if ' ' in u["date"] else u["date"]
+        daily_alerts[day]["count"] += 1
+        daily_alerts[day]["amount"] += u["shortage"]
+    for d in discount_list:
+        day = d["date"].split(' ')[0] if ' ' in d["date"] else d["date"]
+        daily_alerts[day]["count"] += 1
+        daily_alerts[day]["amount"] += d["discount"]
+    for c in cash_discrepancy_list:
+        day = c["shift_end"].split(' ')[0] if ' ' in c["shift_end"] else c["shift_end"]
+        daily_alerts[day]["count"] += 1
+        daily_alerts[day]["amount"] += abs(c["discrepancy"])
+    for e in large_expense_list:
+        day = e["date"].split(' ')[0] if ' ' in e["date"] else e["date"]
+        daily_alerts[day]["count"] += 1
+        daily_alerts[day]["amount"] += e["amount"]
+
+    sorted_days = sorted(daily_alerts.items())
     daily_chart = {
         "labels": [d[0] for d in sorted_days],
         "counts": [d[1]["count"] for d in sorted_days],
         "amounts": [d[1]["amount"] for d in sorted_days],
     } if sorted_days else None
 
-    return templates.TemplateResponse("voids.html", {
+    return templates.TemplateResponse("alerts.html", {
         "request": request,
-        "active_page": "voids",
+        "active_page": "alerts",
         "period": period,
         "display": display,
-        "total_lost": total_lost,
-        "void_count": len(void_list),
+        "total_alerts": total_alerts,
         "void_list": void_list,
+        "total_void_loss": total_void_loss,
+        "zero_payment_list": zero_payment_list,
+        "underpayment_list": underpayment_list,
+        "discount_list": discount_list,
+        "discount_threshold": LARGE_DISCOUNT_THRESHOLD,
+        "cash_discrepancy_list": cash_discrepancy_list,
+        "large_expense_list": large_expense_list,
+        "expense_threshold": LARGE_EXPENSE_THRESHOLD // 100,
         "daily_chart": json.dumps(daily_chart) if daily_chart else "null",
         "date_from_iso": date_from_iso,
         "date_to_iso": date_to_iso,

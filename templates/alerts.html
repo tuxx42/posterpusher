@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+{% block title %}Alerts - POS Dashboard{% endblock %}
+
+{% block extra_head %}
+<style data-spa>
+    .alert-section { margin-bottom: 2rem; }
+    .alert-section h5 {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        user-select: none;
+    }
+    .alert-section h5 .count-badge {
+        background: var(--pico-del-color);
+        color: #fff;
+        border-radius: 12px;
+        padding: 0.1rem 0.5rem;
+        font-size: 0.75rem;
+        font-weight: bold;
+    }
+    .alert-section h5 .count-badge.zero {
+        background: var(--pico-ins-color);
+    }
+    .alert-section h5 .chevron {
+        font-size: 0.7rem;
+        opacity: 0.5;
+        transition: transform 0.2s;
+    }
+    .alert-section h5 .chevron.collapsed { transform: rotate(-90deg); }
+    .severity-high { border-left: 3px solid #f44336; padding-left: 0.75rem; }
+    .severity-medium { border-left: 3px solid #FF9800; padding-left: 0.75rem; }
+    .severity-low { border-left: 3px solid #2196F3; padding-left: 0.75rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h4>Suspicious Activity: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/alerts?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/alerts?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>Last 7 Days</a>
+    <a href="/alerts?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>Last 30 Days</a>
+    <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
+</div>
+<div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
+    <form method="get" action="/alerts" id="custom-range-form">
+        <input type="hidden" name="period" value="custom">
+        <input type="hidden" name="date_from" id="date_from" value="{{ date_from_iso or '' }}">
+        <input type="hidden" name="date_to" id="date_to" value="{{ date_to_iso or '' }}">
+        <input type="text" id="date-range-picker" placeholder="Select date range..." readonly required>
+        <button type="submit">Go</button>
+    </form>
+</div>
+
+<!-- Summary metrics -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value" style="color: {% if total_alerts > 0 %}#f44336{% else %}#4CAF50{% endif %}">{{ total_alerts }}</p>
+        <p class="label">Total Alerts</p>
+    </div>
+    <div class="card metric">
+        <p class="value" style="color: {% if void_list|length > 0 %}#f44336{% else %}#4CAF50{% endif %}">{{ void_list|length }}</p>
+        <p class="label">Voids</p>
+    </div>
+    <div class="card metric">
+        <p class="value" style="color: {% if zero_payment_list|length > 0 %}#f44336{% else %}#4CAF50{% endif %}">{{ zero_payment_list|length }}</p>
+        <p class="label">Zero Payments</p>
+    </div>
+    <div class="card metric">
+        <p class="value" style="color: {% if underpayment_list|length > 0 %}#FF9800{% else %}#4CAF50{% endif %}">{{ underpayment_list|length }}</p>
+        <p class="label">Underpayments</p>
+    </div>
+    <div class="card metric">
+        <p class="value" style="color: {% if discount_list|length > 0 %}#FF9800{% else %}#4CAF50{% endif %}">{{ discount_list|length }}</p>
+        <p class="label">Large Discounts</p>
+    </div>
+    <div class="card metric">
+        <p class="value" style="color: {% if cash_discrepancy_list|length > 0 %}#f44336{% else %}#4CAF50{% endif %}">{{ cash_discrepancy_list|length }}</p>
+        <p class="label">Cash Discrepancies</p>
+    </div>
+    <div class="card metric">
+        <p class="value" style="color: {% if large_expense_list|length > 0 %}#2196F3{% else %}#4CAF50{% endif %}">{{ large_expense_list|length }}</p>
+        <p class="label">Large Expenses</p>
+    </div>
+</div>
+
+<!-- Daily chart -->
+{% if daily_chart != "null" %}
+<div class="card chart-container">
+    <h6>Alerts by Day</h6>
+    <canvas id="dailyChart"></canvas>
+</div>
+{% endif %}
+
+<!-- ========== 1. Voided Transactions ========== -->
+<div class="alert-section severity-high">
+    <h5 onclick="toggleSection(this)">
+        <span class="chevron">&#9660;</span>
+        Voided Transactions
+        <span class="count-badge {% if void_list|length == 0 %}zero{% endif %}">{{ void_list|length }}</span>
+        {% if total_void_loss > 0 %}<small style="opacity:0.6; font-weight:normal; margin-left:0.5rem">Lost: {{ format_currency(total_void_loss) }}</small>{% endif %}
+    </h5>
+    <div class="section-content">
+    {% if void_list %}
+    <div class="card">
+        <table class="product-table sortable-table" role="grid">
+            <thead>
+                <tr>
+                    <th data-sort="id">ID</th>
+                    <th data-sort="date">Date</th>
+                    <th data-sort="time">Time</th>
+                    <th>Table</th>
+                    <th>Staff</th>
+                    <th data-sort="amount">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in void_list %}
+                <tr>
+                    <td data-value="{{ v.transaction_id }}">{{ v.transaction_id }}</td>
+                    <td>{{ v.date.split(' ')[0] if ' ' in v.date else v.date }}</td>
+                    <td>{{ v.time }}</td>
+                    <td>{{ v.table_name or '-' }}</td>
+                    <td>{{ v.staff or '-' }}</td>
+                    <td data-value="{{ v.amount }}">{{ format_currency(v.amount) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="opacity:0.5; font-size:0.9rem;">No voided transactions.</p>
+    {% endif %}
+    </div>
+</div>
+
+<!-- ========== 2. Zero-Payment Sales ========== -->
+<div class="alert-section severity-high">
+    <h5 onclick="toggleSection(this)">
+        <span class="chevron">&#9660;</span>
+        Zero-Payment Sales
+        <span class="count-badge {% if zero_payment_list|length == 0 %}zero{% endif %}">{{ zero_payment_list|length }}</span>
+    </h5>
+    <div class="section-content">
+    {% if zero_payment_list %}
+    <div class="card">
+        <small style="opacity:0.6; display:block; margin-bottom:0.5rem;">Orders closed without any payment received.</small>
+        <table class="product-table sortable-table" role="grid">
+            <thead>
+                <tr>
+                    <th data-sort="id">ID</th>
+                    <th data-sort="date">Date</th>
+                    <th data-sort="time">Time</th>
+                    <th>Table</th>
+                    <th>Staff</th>
+                    <th data-sort="amount">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for z in zero_payment_list %}
+                <tr>
+                    <td data-value="{{ z.transaction_id }}">{{ z.transaction_id }}</td>
+                    <td>{{ z.date.split(' ')[0] if ' ' in z.date else z.date }}</td>
+                    <td>{{ z.time }}</td>
+                    <td>{{ z.table_name or '-' }}</td>
+                    <td>{{ z.staff or '-' }}</td>
+                    <td data-value="{{ z.amount }}">{{ format_currency(z.amount) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="opacity:0.5; font-size:0.9rem;">No zero-payment sales.</p>
+    {% endif %}
+    </div>
+</div>
+
+<!-- ========== 3. Underpayments ========== -->
+<div class="alert-section severity-medium">
+    <h5 onclick="toggleSection(this)">
+        <span class="chevron">&#9660;</span>
+        Underpayments
+        <span class="count-badge {% if underpayment_list|length == 0 %}zero{% endif %}">{{ underpayment_list|length }}</span>
+    </h5>
+    <div class="section-content">
+    {% if underpayment_list %}
+    <div class="card">
+        <small style="opacity:0.6; display:block; margin-bottom:0.5rem;">Orders where payment received was less than the order total.</small>
+        <table class="product-table sortable-table" role="grid">
+            <thead>
+                <tr>
+                    <th data-sort="id">ID</th>
+                    <th data-sort="date">Date</th>
+                    <th data-sort="time">Time</th>
+                    <th>Table</th>
+                    <th>Staff</th>
+                    <th data-sort="total">Order Total</th>
+                    <th data-sort="paid">Paid</th>
+                    <th data-sort="shortage">Shortage</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in underpayment_list %}
+                <tr>
+                    <td data-value="{{ u.transaction_id }}">{{ u.transaction_id }}</td>
+                    <td>{{ u.date.split(' ')[0] if ' ' in u.date else u.date }}</td>
+                    <td>{{ u.time }}</td>
+                    <td>{{ u.table_name or '-' }}</td>
+                    <td>{{ u.staff or '-' }}</td>
+                    <td data-value="{{ u.amount }}">{{ format_currency(u.amount) }}</td>
+                    <td data-value="{{ u.paid }}">{{ format_currency(u.paid) }}</td>
+                    <td data-value="{{ u.shortage }}" style="color:#f44336">{{ format_currency(u.shortage) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="opacity:0.5; font-size:0.9rem;">No underpayments.</p>
+    {% endif %}
+    </div>
+</div>
+
+<!-- ========== 4. Large Discounts ========== -->
+<div class="alert-section severity-medium">
+    <h5 onclick="toggleSection(this)">
+        <span class="chevron">&#9660;</span>
+        Large Discounts (>{{ discount_threshold }}%)
+        <span class="count-badge {% if discount_list|length == 0 %}zero{% endif %}">{{ discount_list|length }}</span>
+    </h5>
+    <div class="section-content">
+    {% if discount_list %}
+    <div class="card">
+        <table class="product-table sortable-table" role="grid">
+            <thead>
+                <tr>
+                    <th data-sort="id">ID</th>
+                    <th data-sort="date">Date</th>
+                    <th data-sort="time">Time</th>
+                    <th>Table</th>
+                    <th>Staff</th>
+                    <th data-sort="original">Original</th>
+                    <th data-sort="discount">Discount</th>
+                    <th data-sort="pct">%</th>
+                    <th data-sort="final">Final</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in discount_list %}
+                <tr>
+                    <td data-value="{{ d.transaction_id }}">{{ d.transaction_id }}</td>
+                    <td>{{ d.date.split(' ')[0] if ' ' in d.date else d.date }}</td>
+                    <td>{{ d.time }}</td>
+                    <td>{{ d.table_name or '-' }}</td>
+                    <td>{{ d.staff or '-' }}</td>
+                    <td data-value="{{ d.original }}">{{ format_currency(d.original) }}</td>
+                    <td data-value="{{ d.discount }}" style="color:#FF9800">{{ format_currency(d.discount) }}</td>
+                    <td data-value="{{ d.discount_pct }}">{{ "%.1f"|format(d.discount_pct) }}%</td>
+                    <td data-value="{{ d.final_amount }}">{{ format_currency(d.final_amount) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="opacity:0.5; font-size:0.9rem;">No large discounts.</p>
+    {% endif %}
+    </div>
+</div>
+
+<!-- ========== 5. Cash Register Discrepancies ========== -->
+<div class="alert-section severity-high">
+    <h5 onclick="toggleSection(this)">
+        <span class="chevron">&#9660;</span>
+        Cash Register Discrepancies (>100 THB)
+        <span class="count-badge {% if cash_discrepancy_list|length == 0 %}zero{% endif %}">{{ cash_discrepancy_list|length }}</span>
+    </h5>
+    <div class="section-content">
+    {% if cash_discrepancy_list %}
+    <div class="card">
+        <small style="opacity:0.6; display:block; margin-bottom:0.5rem;">Difference between expected and actual cash at shift close.</small>
+        <table class="product-table sortable-table" role="grid">
+            <thead>
+                <tr>
+                    <th data-sort="date">Shift Closed</th>
+                    <th>Staff</th>
+                    <th data-sort="expected">Expected</th>
+                    <th data-sort="actual">Actual</th>
+                    <th data-sort="diff">Difference</th>
+                    <th>Type</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in cash_discrepancy_list %}
+                <tr>
+                    <td>{{ c.shift_end }}</td>
+                    <td>{{ c.staff or '-' }}</td>
+                    <td data-value="{{ c.expected }}">{{ format_currency(c.expected) }}</td>
+                    <td data-value="{{ c.actual }}">{{ format_currency(c.actual) }}</td>
+                    <td data-value="{{ c.discrepancy }}" style="color:{% if c.is_shortage %}#f44336{% else %}#FF9800{% endif %}">
+                        {{ format_currency(c.discrepancy|abs) }}
+                    </td>
+                    <td style="color:{% if c.is_shortage %}#f44336{% else %}#FF9800{% endif %}">
+                        {{ "Shortage" if c.is_shortage else "Overage" }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="opacity:0.5; font-size:0.9rem;">No cash register discrepancies.</p>
+    {% endif %}
+    </div>
+</div>
+
+<!-- ========== 6. Large Expenses ========== -->
+<div class="alert-section severity-low">
+    <h5 onclick="toggleSection(this)">
+        <span class="chevron">&#9660;</span>
+        Large Expenses (>{{ expense_threshold }} THB)
+        <span class="count-badge {% if large_expense_list|length == 0 %}zero{% endif %}">{{ large_expense_list|length }}</span>
+    </h5>
+    <div class="section-content">
+    {% if large_expense_list %}
+    <div class="card">
+        <table class="product-table sortable-table" role="grid">
+            <thead>
+                <tr>
+                    <th data-sort="date">Date</th>
+                    <th data-sort="category">Category</th>
+                    <th>Description</th>
+                    <th data-sort="amount">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in large_expense_list %}
+                <tr>
+                    <td>{{ e.date }}</td>
+                    <td>{{ e.category }}</td>
+                    <td>{{ e.comment }}</td>
+                    <td data-value="{{ e.amount }}">{{ format_currency(e.amount) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="opacity:0.5; font-size:0.9rem;">No large expenses.</p>
+    {% endif %}
+    </div>
+</div>
+
+{% if total_alerts == 0 %}
+<div class="card" style="text-align:center; padding:2rem;">
+    <p style="font-size:1.2rem; color:#4CAF50; margin:0;">No suspicious activity detected for this period.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const dailyChart = {{ daily_chart | safe }};
+
+    if (dailyChart && dailyChart.labels.length > 0) {
+        renderBarChart('dailyChart', dailyChart.labels, [
+            { label: 'Suspicious Amount', data: dailyChart.amounts.map(v => v / 100), backgroundColor: 'rgba(244, 67, 54, 0.7)' },
+            { label: 'Alert Count', data: dailyChart.counts, backgroundColor: 'rgba(255, 152, 0, 0.5)' }
+        ]);
+    }
+
+    // Collapsible sections
+    function toggleSection(header) {
+        const content = header.nextElementSibling;
+        const chevron = header.querySelector('.chevron');
+        if (content.style.display === 'none') {
+            content.style.display = '';
+            chevron.classList.remove('collapsed');
+        } else {
+            content.style.display = 'none';
+            chevron.classList.add('collapsed');
+        }
+    }
+
+    // Auto-collapse empty sections
+    document.querySelectorAll('.alert-section').forEach(function(section) {
+        const badge = section.querySelector('.count-badge');
+        if (badge && badge.classList.contains('zero')) {
+            const content = section.querySelector('.section-content');
+            const chevron = section.querySelector('.chevron');
+            if (content) content.style.display = 'none';
+            if (chevron) chevron.classList.add('collapsed');
+        }
+    });
+
+    // Flatpickr date range picker
+    const dfVal = document.getElementById('date_from').value;
+    const dtVal = document.getElementById('date_to').value;
+    const fp = flatpickr('#date-range-picker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: (dfVal && dtVal) ? [dfVal, dtVal] : [],
+        onChange: function(selectedDates) {
+            if (selectedDates.length === 2) {
+                const fmt = d => d.toISOString().slice(0, 10);
+                document.getElementById('date_from').value = fmt(selectedDates[0]);
+                document.getElementById('date_to').value = fmt(selectedDates[1]);
+            }
+        }
+    });
+
+    document.getElementById('custom-toggle').addEventListener('click', function(e) {
+        e.preventDefault();
+        const panel = document.getElementById('custom-range');
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'flex';
+        if (!visible) fp.open();
+    });
+</script>
+{% endblock %}
