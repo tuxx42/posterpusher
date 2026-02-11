@@ -241,7 +241,7 @@ def format_currency(amount_in_cents, short=False):
             sign = "-" if amount < 0 else ""
             if abs_amount >= 1_000_000:
                 return f"฿{sign}{abs_amount / 1_000_000:.1f}M"
-            elif abs_amount >= 1_000:
+            elif abs_amount >= 100_000:
                 return f"฿{sign}{abs_amount / 1_000:.1f}k"
             else:
                 return f"฿{sign}{abs_amount:,.0f}"
