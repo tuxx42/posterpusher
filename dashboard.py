@@ -615,6 +615,7 @@ async def page_dashboard(request: Request):
         if cash_register["status"] == "Closed":
             close_iso = shift_end.replace(' ', 'T') if ' ' in shift_end else shift_end + "T00:00:00"
             cash_timeline["points"].append({"x": close_iso, "y": cash_register["current_cash"]})
+        cash_timeline["points"].sort(key=lambda p: p["x"])
 
     # Pre-process sales for template
     sales_display = []
@@ -726,6 +727,7 @@ async def page_summary(
                     p["y"] += opening
                 open_iso = shift_start.replace(' ', 'T') if ' ' in shift_start else shift_start + "T00:00:00"
                 cash_timeline["points"].insert(0, {"x": open_iso, "y": opening})
+                cash_timeline["points"].sort(key=lambda p: p["x"])
                 break
 
     # Build expense-by-comment pie chart data
