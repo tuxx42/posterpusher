@@ -233,6 +233,62 @@ function renderPieChart(canvasId, labels, data) {
     });
 }
 
+function renderLineChart(canvasId, labels, datasets) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    datasets.forEach(function(ds) {
+        ds.tension = 0.3;
+        ds.pointRadius = 3;
+        ds.pointHoverRadius = 6;
+        ds.borderWidth = 2;
+        ds.fill = ds.fill !== undefined ? ds.fill : false;
+    });
+
+    return new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            animation: ANIMATION_OPTIONS,
+            interaction: INTERACTION_OPTIONS,
+            plugins: {
+                legend: { labels: { color: '#ccc', usePointStyle: true, padding: 16 } },
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.85)',
+                    titleFont: { size: 13 },
+                    bodyFont: { size: 12 },
+                    padding: 12,
+                    cornerRadius: 8,
+                    callbacks: {
+                        label: function(context) {
+                            return ' ' + context.dataset.label + ': ' + formatCurrency(context.raw * 100);
+                        }
+                    }
+                },
+                zoom: ZOOM_OPTIONS,
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#999' },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                },
+                y: {
+                    ticks: {
+                        color: '#999',
+                        callback: function(value) { return formatCurrency(value * 100); }
+                    },
+                    grid: { color: 'rgba(255,255,255,0.08)' }
+                }
+            },
+            onHover: function(event, elements) {
+                event.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+            }
+        }
+    });
+}
+
 // ============================================================
 // WebSocket client with auto-reconnect
 // ============================================================

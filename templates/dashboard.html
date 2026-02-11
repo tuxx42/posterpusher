@@ -37,6 +37,14 @@
     {% endif %}
 </div>
 
+<!-- Cash register timeline -->
+{% if cash_timeline != "null" %}
+<div class="card chart-container">
+    <h6>Cash in Register</h6>
+    <canvas id="cashTimelineChart"></canvas>
+</div>
+{% endif %}
+
 <!-- Sales feed -->
 <div class="card">
     <div id="sales-feed">
@@ -71,7 +79,8 @@
         sales: {{ summary.total_sales }},
         profit: {{ summary.total_profit }},
         cash: {{ summary.cash_sales }},
-        card: {{ summary.card_sales }}
+        card: {{ summary.card_sales }},
+        register: {{ cash_register.current_cash if cash_register else 0 }}
     };
 
     function updateMetrics() {
@@ -80,6 +89,8 @@
         document.getElementById('metric-profit').textContent = formatCurrency(runningMetrics.profit);
         document.getElementById('metric-cash').textContent = formatCurrency(runningMetrics.cash);
         document.getElementById('metric-card').textContent = formatCurrency(runningMetrics.card);
+        const regEl = document.getElementById('metric-register');
+        if (regEl) regEl.textContent = formatCurrency(runningMetrics.register);
     }
 
     function addSaleToFeed(sale) {
@@ -125,7 +136,31 @@
         runningMetrics.profit += sale.total_profit;
         runningMetrics.cash += sale.payed_cash;
         runningMetrics.card += sale.payed_card;
+        if (sale.payed_cash > 0) {
+            runningMetrics.register += sale.payed_cash;
+            // Update cash timeline chart
+            if (cashChart) {
+                cashChart.data.labels.push(time);
+                cashChart.data.datasets[0].data.push(runningMetrics.register / 100);
+                cashChart.update();
+            }
+        }
         updateMetrics();
+    }
+
+    // Cash register timeline chart
+    const cashTimelineData = {{ cash_timeline | safe }};
+    let cashChart = null;
+    if (cashTimelineData && cashTimelineData.labels.length > 0) {
+        cashChart = renderLineChart('cashTimelineChart', cashTimelineData.labels, [
+            {
+                label: 'Cash in Register',
+                data: cashTimelineData.values.map(v => v / 100),
+                borderColor: 'rgba(76, 175, 80, 0.9)',
+                backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                fill: true
+            }
+        ]);
     }
 
     // Initialize WebSocket

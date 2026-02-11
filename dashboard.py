@@ -558,6 +558,29 @@ async def page_dashboard(request: Request):
             "current_cash": current_cash,
         }
 
+    # Build cash register timeline (running balance over time)
+    cash_timeline = None
+    if cash_register and cash_register["status"] == "Open":
+        # Sort by transaction_id ascending (chronological)
+        cash_txns = sorted(closed, key=lambda x: int(x.get('transaction_id', 0) or 0))
+        opening = int(shifts[0].get('amount_start', 0) or 0)
+        cash_out = int(shifts[0].get('amount_credit', 0) or 0)
+        balance = opening - cash_out
+        timeline_labels = ["Open"]
+        timeline_values = [balance]
+        for txn in cash_txns:
+            payed_cash = int(txn.get('payed_cash', 0) or 0)
+            if payed_cash > 0:
+                balance += payed_cash
+                close_time = adjust_poster_time(txn.get('date_close_date', ''))
+                time_label = close_time.split(' ')[1][:5] if ' ' in close_time else ''
+                timeline_labels.append(time_label)
+                timeline_values.append(balance)
+        cash_timeline = {
+            "labels": timeline_labels,
+            "values": timeline_values,
+        }
+
     # Pre-process sales for template
     sales_display = []
     for txn in closed[:30]:
@@ -594,6 +617,7 @@ async def page_dashboard(request: Request):
         "active_page": "dashboard",
         "summary": summary,
         "cash_register": cash_register,
+        "cash_timeline": json.dumps(cash_timeline) if cash_timeline else "null",
         "sales": sales_display,
         "format_currency": format_currency,
         "ws_url": ws_url,
