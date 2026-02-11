@@ -363,8 +363,10 @@ function initSalesWebSocket(url, onSale) {
 // Sortable tables
 // ============================================================
 
-(function() {
+function initSortableTables() {
     document.querySelectorAll('.sortable-table').forEach(function(table) {
+        if (table.dataset.sortInit) return; // already initialized
+        table.dataset.sortInit = '1';
         const headers = table.querySelectorAll('th[data-sort]');
         let currentSort = { col: null, asc: true };
 
@@ -399,4 +401,7 @@ function initSalesWebSocket(url, onSale) {
             });
         });
     });
-})();
+}
+
+// Init on first load
+initSortableTables();

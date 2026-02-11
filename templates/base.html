@@ -183,16 +183,21 @@
                 clone.setAttribute('data-spa', '');
                 document.head.appendChild(clone);
             });
+            // Reset loading opacity
+            document.querySelector('main').style.opacity = '';
             // Execute new page scripts (inline scripts after </main>)
             var scripts = doc.querySelectorAll('body script:not([src])');
             // Skip the SPA script itself (last body script) and dashboard.js
             scripts.forEach(function(s) {
                 if (s.textContent.indexOf('isLocalLink') !== -1) return;
-                var exec = document.createElement('script');
-                exec.textContent = s.textContent;
-                document.body.appendChild(exec);
-                exec.remove();
+                try {
+                    (new Function(s.textContent))();
+                } catch(e) {
+                    console.error('SPA script error:', e);
+                }
             });
+            // Re-init sortable tables for new content
+            if (typeof initSortableTables === 'function') initSortableTables();
             window.scrollTo(0, 0);
         }
 
