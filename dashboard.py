@@ -5,13 +5,14 @@ Provides interactive charts and a real-time sales feed via WebSocket.
 import os
 import json
 import asyncio
-import secrets
+import base64
+import hashlib
 import logging
 from datetime import datetime, timedelta
 
 import uvicorn
 from fastapi import FastAPI, Request, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -22,10 +23,6 @@ logger = logging.getLogger(__name__)
 DASHBOARD_HOST = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
 # Railway sets PORT env var; fall back to DASHBOARD_PORT or 8050 for local dev
 DASHBOARD_PORT = int(os.environ.get("PORT", os.environ.get("DASHBOARD_PORT", "8050")))
-SESSION_SECRET = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
-TOKEN_EXPIRY_MINUTES = 60
-SESSION_EXPIRY_HOURS = 24
-SESSION_COOKIE_NAME = "pos_session_id"
 
 
 def get_dashboard_url() -> str:
@@ -36,12 +33,6 @@ def get_dashboard_url() -> str:
     if railway_domain:
         return f"https://{railway_domain}"
     return f"http://localhost:{DASHBOARD_PORT}"
-
-# Token and session storage (in-memory, lost on restart)
-# {token_str: {"user_id": str, "username": str, "created": datetime, "expires": datetime}}
-dashboard_tokens = {}
-# {session_id: {"user_id": str, "username": str, "created": datetime}}
-dashboard_sessions = {}
 
 # Connected WebSocket clients
 connected_clients: set[WebSocket] = set()
@@ -59,52 +50,53 @@ dashboard_app.mount("/static", StaticFiles(directory=os.path.join(_base_dir, "st
 # Auth helpers
 # ============================================================
 
-def generate_dashboard_token(user_id: str, username: str) -> str:
-    """Generate a one-time login token. Called from the /dashboard Telegram command."""
-    now = datetime.now()
-    # Clean expired tokens
-    expired = [t for t, data in dashboard_tokens.items() if data["expires"] < now]
-    for t in expired:
-        del dashboard_tokens[t]
-
-    token = secrets.token_urlsafe(32)
-    dashboard_tokens[token] = {
-        "user_id": str(user_id),
-        "username": username,
-        "created": now,
-        "expires": now + timedelta(minutes=TOKEN_EXPIRY_MINUTES),
-    }
-    return token
+def _verify_password(password: str, stored_hash: str) -> bool:
+    """Verify a password against a stored salt$hash."""
+    salt, hash_val = stored_hash.split('$', 1)
+    return hashlib.sha256(f"{salt}{password}".encode()).hexdigest() == hash_val
 
 
-def get_session(request: Request) -> dict | None:
-    """Get valid session from request cookie, or None."""
-    session_id = request.cookies.get(SESSION_COOKIE_NAME)
-    if not session_id or session_id not in dashboard_sessions:
+def _unauthorized_response():
+    """Return a 401 response that triggers the browser's basic auth dialog."""
+    return Response(
+        content="Unauthorized",
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="POS Dashboard"'},
+    )
+
+
+def check_basic_auth(request: Request) -> dict | None:
+    """Check HTTP Basic Auth credentials against dashboard_passwords.
+
+    Returns {"user_id": str, "username": str} on success, None on failure.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Basic "):
         return None
 
-    session = dashboard_sessions[session_id]
-    user_id = session["user_id"]
-
-    # Check session expiry
-    age = datetime.now() - session["created"]
-    if age.total_seconds() > SESSION_EXPIRY_HOURS * 3600:
-        del dashboard_sessions[session_id]
+    try:
+        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+        username, password = decoded.split(":", 1)
+    except Exception:
         return None
 
-    # Verify user is still authorized
-    if user_id not in config.admin_chat_ids and user_id not in config.approved_users:
-        del dashboard_sessions[session_id]
-        return None
+    # Look up user by username in dashboard_passwords
+    for chat_id, entry in config.dashboard_passwords.items():
+        if entry["username"] == username and _verify_password(password, entry["password_hash"]):
+            return {"user_id": chat_id, "username": username}
 
-    return session
+    return None
 
 
 async def require_auth(request: Request) -> dict:
-    """FastAPI dependency that checks for valid session."""
-    session = get_session(request)
+    """FastAPI dependency that checks HTTP Basic Auth."""
+    session = check_basic_auth(request)
     if session is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": 'Basic realm="POS Dashboard"'},
+        )
     return session
 
 
@@ -129,18 +121,6 @@ async def broadcast_sale(sale_data: dict):
 @dashboard_app.websocket("/ws/sales")
 async def websocket_sales(websocket: WebSocket):
     """WebSocket endpoint for real-time sales feed."""
-    # Authenticate via session cookie
-    session_id = websocket.cookies.get(SESSION_COOKIE_NAME)
-    if not session_id or session_id not in dashboard_sessions:
-        await websocket.close(code=4001, reason="Not authenticated")
-        return
-
-    session = dashboard_sessions[session_id]
-    age = datetime.now() - session["created"]
-    if age.total_seconds() > SESSION_EXPIRY_HOURS * 3600:
-        await websocket.close(code=4001, reason="Session expired")
-        return
-
     await websocket.accept()
     connected_clients.add(websocket)
     logger.info(f"WebSocket client connected ({len(connected_clients)} total)")
@@ -154,59 +134,6 @@ async def websocket_sales(websocket: WebSocket):
     finally:
         connected_clients.discard(websocket)
         logger.info(f"WebSocket client disconnected ({len(connected_clients)} total)")
-
-
-# ============================================================
-# Auth routes (public)
-# ============================================================
-
-@dashboard_app.get("/auth")
-async def auth_token_exchange(request: Request, token: str = Query(...)):
-    """Exchange a token for a session cookie. Token is reusable until it expires."""
-    token_data = dashboard_tokens.get(token)
-    if not token_data:
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "error": "Invalid or expired link. Please run /dashboard in Telegram to get a new link."
-        }, status_code=401)
-
-    if token_data["expires"] < datetime.now():
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "error": "This link has expired. Please run /dashboard in Telegram to get a new link."
-        }, status_code=401)
-
-    # Create session
-    session_id = secrets.token_urlsafe(32)
-    dashboard_sessions[session_id] = {
-        "user_id": token_data["user_id"],
-        "username": token_data["username"],
-        "created": datetime.now(),
-    }
-
-    response = RedirectResponse(url="/", status_code=302)
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=session_id,
-        max_age=SESSION_EXPIRY_HOURS * 3600,
-        httponly=True,
-        samesite="lax",
-    )
-    return response
-
-
-@dashboard_app.get("/logout")
-async def logout(request: Request):
-    """Clear session and redirect to login message."""
-    session_id = request.cookies.get(SESSION_COOKIE_NAME)
-    if session_id:
-        dashboard_sessions.pop(session_id, None)
-    response = templates.TemplateResponse("login.html", {
-        "request": request,
-        "error": "You have been logged out. Run /dashboard in Telegram to log in again."
-    })
-    response.delete_cookie(SESSION_COOKIE_NAME)
-    return response
 
 
 # ============================================================
@@ -565,12 +492,9 @@ async def api_products(period: str, session: dict = Depends(require_auth)):
 @dashboard_app.get("/", response_class=HTMLResponse)
 async def page_dashboard(request: Request):
     """Live sales feed dashboard."""
-    session = get_session(request)
+    session = check_basic_auth(request)
     if session is None:
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "error": "Please run /dashboard in Telegram to get a login link."
-        }, status_code=401)
+        return _unauthorized_response()
 
     from app import fetch_transactions, fetch_finance_transactions, fetch_cash_shifts, get_business_date, adjust_poster_time, calculate_summary, format_currency
 
@@ -689,12 +613,9 @@ async def page_summary(
     date_to: str = Query(None),
 ):
     """Summary dashboard page."""
-    session = get_session(request)
+    session = check_basic_auth(request)
     if session is None:
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "error": "Please run /dashboard in Telegram to get a login link."
-        }, status_code=401)
+        return _unauthorized_response()
 
     from app import fetch_transactions, fetch_finance_transactions, fetch_cash_shifts, adjust_poster_time, calculate_summary, calculate_expenses, format_currency
 
@@ -810,12 +731,9 @@ async def page_hourly(
     date_to: str = Query(None),
 ):
     """Hourly summary page with charts grouped by day of week."""
-    session = get_session(request)
+    session = check_basic_auth(request)
     if session is None:
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "error": "Please run /dashboard in Telegram to get a login link."
-        }, status_code=401)
+        return _unauthorized_response()
 
     from app import fetch_transactions, format_currency
 
@@ -863,12 +781,9 @@ async def page_hourly(
 @dashboard_app.get("/products", response_class=HTMLResponse)
 async def page_products(request: Request, period: str = "today"):
     """Product analytics page."""
-    session = get_session(request)
+    session = check_basic_auth(request)
     if session is None:
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "error": "Please run /dashboard in Telegram to get a login link."
-        }, status_code=401)
+        return _unauthorized_response()
 
     from app import fetch_product_sales, format_currency
 

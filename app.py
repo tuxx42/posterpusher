@@ -534,7 +534,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>🤖 AI Assistant:</b>\n"
         "/agent &lt;question&gt; - Ask AI about your data\n\n"
         "<b>📊 Dashboard:</b>\n"
-        "/dashboard - Open web dashboard\n\n"
+        "/dashboard - Open web dashboard\n"
+        "/setpassword &lt;pw&gt; - Set dashboard password\n\n"
     )
 
     # Add admin commands if user is admin
@@ -2713,25 +2714,70 @@ async def send_daily_summary():
 
 @require_auth
 async def dashboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /dashboard command - generate a login URL for the web dashboard."""
-    from dashboard import generate_dashboard_token, get_dashboard_url
+    """Handle /dashboard command - show the dashboard URL."""
+    from dashboard import get_dashboard_url
+
+    chat_id = str(update.effective_chat.id)
+    dashboard_url = get_dashboard_url()
+
+    has_password = chat_id in config.dashboard_passwords
+
+    if has_password:
+        await update.message.reply_text(
+            f"<b>Web Dashboard</b>\n\n"
+            f'<a href="{dashboard_url}">Open Dashboard</a>\n\n'
+            f"<i>Log in with your Telegram username and the password you set via /setpassword.</i>",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+    else:
+        await update.message.reply_text(
+            f"<b>Web Dashboard</b>\n\n"
+            f"You need to set a password first.\n"
+            f"Use: /setpassword &lt;your_password&gt;\n\n"
+            f"Then visit: {dashboard_url}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+
+
+@require_auth
+async def setpassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /setpassword command - set dashboard login password."""
+    import hashlib as _hashlib
 
     chat_id = str(update.effective_chat.id)
     user = update.effective_user
     username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
 
-    token = generate_dashboard_token(chat_id, username)
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /setpassword &lt;password&gt;\n\n"
+            "This sets your password for the web dashboard. "
+            "You'll log in with your Telegram username and this password.",
+            parse_mode=ParseMode.HTML
+        )
+        return
 
-    dashboard_url = get_dashboard_url()
-    login_url = f"{dashboard_url}/auth?token={token}"
+    password = " ".join(context.args)
+    if len(password) < 4:
+        await update.message.reply_text("Password must be at least 4 characters.")
+        return
+
+    # Hash with salt
+    salt = os.urandom(16).hex()
+    password_hash = _hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+
+    config.dashboard_passwords[chat_id] = {
+        "username": username,
+        "password_hash": f"{salt}${password_hash}",
+    }
+    save_config()
 
     await update.message.reply_text(
-        f"<b>Web Dashboard</b>\n\n"
-        f"Click to open your dashboard:\n"
-        f'<a href="{login_url}">Open Dashboard</a>\n\n'
-        f"<i>This link expires in 1 hour.</i>",
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True
+        f"Dashboard password set for <b>{username}</b>.\n\n"
+        f"Use /dashboard to get the link.",
+        parse_mode=ParseMode.HTML
     )
 
 
@@ -2993,6 +3039,7 @@ def main():
     application.add_handler(CommandHandler("alerts_off", alerts_off))
     application.add_handler(CommandHandler("agent", agent))
     application.add_handler(CommandHandler("dashboard", dashboard_cmd))
+    application.add_handler(CommandHandler("setpassword", setpassword_cmd))
 
     # Set up scheduler for background jobs
     scheduler = AsyncIOScheduler(timezone=THAI_TZ)
