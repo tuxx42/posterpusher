@@ -1009,6 +1009,84 @@ async def page_config(request: Request):
     })
 
 
+@dashboard_app.get("/inventory", response_class=HTMLResponse)
+async def page_inventory(request: Request):
+    """Inventory / stock levels page."""
+    session = check_basic_auth(request)
+    if session is None:
+        return _unauthorized_response()
+
+    from app import fetch_stock_levels, fetch_ingredient_usage, get_business_date, format_currency
+
+    stock_data = await _run_sync(fetch_stock_levels)
+
+    # Categorize stock items
+    negative_stock = []
+    low_stock = []
+    normal_stock = []
+
+    for item in stock_data:
+        name = item.get('ingredient_name', 'Unknown')
+        left = float(item.get('ingredient_left', 0) or 0)
+        unit = item.get('ingredient_unit', '')
+        limit_val = float(item.get('limit_value', 0) or 0)
+        hidden = item.get('hidden', '0') == '1'
+
+        if hidden:
+            continue
+
+        entry = {"name": name, "left": left, "unit": unit, "limit": limit_val}
+
+        if left < 0:
+            negative_stock.append(entry)
+        elif limit_val > 0 and left <= limit_val:
+            low_stock.append(entry)
+        elif left > 0:
+            normal_stock.append(entry)
+
+    negative_stock.sort(key=lambda x: x["left"])
+    low_stock.sort(key=lambda x: x["left"])
+    normal_stock.sort(key=lambda x: x["name"])
+
+    total_items = len(negative_stock) + len(low_stock) + len(normal_stock)
+
+    # Fetch ingredient usage for last 30 days
+    today = get_business_date()
+    date_from = (today - timedelta(days=29)).strftime('%Y%m%d')
+    date_to = today.strftime('%Y%m%d')
+    usage_data = await _run_sync(fetch_ingredient_usage, date_from, date_to)
+
+    top_used = []
+    for item in usage_data:
+        usage = float(item.get('write_offs', 0) or 0)
+        if usage > 0:
+            top_used.append({
+                "name": item.get('ingredient_name', 'Unknown'),
+                "usage": usage,
+            })
+    top_used.sort(key=lambda x: x["usage"], reverse=True)
+    top_used = top_used[:20]
+
+    # Chart data for top used ingredients
+    usage_chart = {
+        "labels": [i["name"] for i in top_used],
+        "values": [i["usage"] for i in top_used],
+    } if top_used else None
+
+    return templates.TemplateResponse("inventory.html", {
+        "request": request,
+        "active_page": "inventory",
+        "negative_stock": negative_stock,
+        "low_stock": low_stock,
+        "normal_stock": normal_stock,
+        "total_items": total_items,
+        "alert_count": len(negative_stock) + len(low_stock),
+        "usage_chart": json.dumps(usage_chart) if usage_chart else "null",
+        "username": session["username"],
+        "is_admin": session.get("is_admin", False),
+    })
+
+
 @dashboard_app.get("/chat", response_class=HTMLResponse)
 async def page_chat(request: Request):
     """AI Chat page."""

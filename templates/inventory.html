@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Inventory - POS Dashboard{% endblock %}
+
+{% block extra_head %}
+<style>
+    .stock-alert { color: #f44336; }
+    .stock-warn { color: #FF9800; }
+    .stock-ok { color: #4CAF50; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h4>Inventory</h4>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value">{{ total_items }}</p>
+        <p class="label">Total Items</p>
+    </div>
+    <div class="card metric">
+        <p class="value {% if alert_count > 0 %}stock-alert{% else %}stock-ok{% endif %}">{{ alert_count }}</p>
+        <p class="label">Alerts</p>
+    </div>
+    <div class="card metric">
+        <p class="value stock-alert">{{ negative_stock|length }}</p>
+        <p class="label">Negative Stock</p>
+    </div>
+    <div class="card metric">
+        <p class="value stock-warn">{{ low_stock|length }}</p>
+        <p class="label">Low Stock</p>
+    </div>
+</div>
+
+<!-- Alerts -->
+{% if negative_stock %}
+<div class="card">
+    <h6 class="stock-alert">Negative Stock (needs restock)</h6>
+    <table class="product-table sortable-table" role="grid">
+        <thead>
+            <tr>
+                <th data-sort="name">Item</th>
+                <th data-sort="qty">Quantity</th>
+                <th data-sort="unit">Unit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in negative_stock %}
+            <tr>
+                <td>{{ item.name }}</td>
+                <td data-value="{{ item.left }}" class="stock-alert">{{ "%.2f"|format(item.left) }}</td>
+                <td>{{ item.unit }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if low_stock %}
+<div class="card">
+    <h6 class="stock-warn">Low Stock (below limit)</h6>
+    <table class="product-table sortable-table" role="grid">
+        <thead>
+            <tr>
+                <th data-sort="name">Item</th>
+                <th data-sort="qty">Quantity</th>
+                <th data-sort="limit">Limit</th>
+                <th data-sort="unit">Unit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in low_stock %}
+            <tr>
+                <td>{{ item.name }}</td>
+                <td data-value="{{ item.left }}" class="stock-warn">{{ "%.2f"|format(item.left) }}</td>
+                <td data-value="{{ item.limit }}">{{ "%.0f"|format(item.limit) }}</td>
+                <td>{{ item.unit }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if not negative_stock and not low_stock %}
+<div class="card" style="text-align:center; opacity:0.7; padding:2rem;">
+    All items are well stocked.
+</div>
+{% endif %}
+
+<!-- Top used ingredients (last 30 days) -->
+{% if usage_chart != "null" %}
+<div class="card chart-container">
+    <h6>Top Used Ingredients (Last 30 Days)</h6>
+    <canvas id="usageChart"></canvas>
+</div>
+{% endif %}
+
+<!-- Full stock table -->
+{% if normal_stock %}
+<details>
+    <summary>All stocked items ({{ normal_stock|length }})</summary>
+    <div class="card">
+        <table class="product-table sortable-table" role="grid">
+            <thead>
+                <tr>
+                    <th data-sort="name">Item</th>
+                    <th data-sort="qty">Quantity</th>
+                    <th data-sort="unit">Unit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in normal_stock %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td data-value="{{ item.left }}">{{ "%.2f"|format(item.left) }}</td>
+                    <td>{{ item.unit }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</details>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const usageData = {{ usage_chart | safe }};
+
+    if (usageData && usageData.labels.length > 0) {
+        renderHorizontalBarChart('usageChart', usageData.labels, [
+            { label: 'Usage', data: usageData.values, backgroundColor: 'rgba(33, 150, 243, 0.7)' }
+        ]);
+    }
+</script>
+{% endblock %}
