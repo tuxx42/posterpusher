@@ -668,7 +668,7 @@ async def page_dashboard(request: Request):
 @dashboard_app.get("/summary", response_class=HTMLResponse)
 async def page_summary(
     request: Request,
-    period: str = "today",
+    period: str = "month",
     date_from: str = Query(None),
     date_to: str = Query(None),
 ):
@@ -866,7 +866,7 @@ async def page_hourly(
 
 
 @dashboard_app.get("/products", response_class=HTMLResponse)
-async def page_products(request: Request, period: str = "today"):
+async def page_products(request: Request, period: str = "month"):
     """Product analytics page."""
     session = check_basic_auth(request)
     if session is None:
