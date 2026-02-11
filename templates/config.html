@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Config — POS Dashboard{% endblock %}
+{% block extra_head %}
+<style>
+    .config-raw {
+        background: var(--pico-card-background-color);
+        border-radius: var(--pico-border-radius);
+        padding: 1rem;
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        white-space: pre;
+        font-family: monospace;
+    }
+</style>
+{% endblock %}
+{% block content %}
+<h4>Configuration</h4>
+<pre class="config-raw">{{ config_json }}</pre>
+{% endblock %}

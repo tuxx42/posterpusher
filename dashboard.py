@@ -949,6 +949,38 @@ async def page_products(request: Request, period: str = "today"):
     })
 
 
+@dashboard_app.get("/config", response_class=HTMLResponse)
+async def page_config(request: Request):
+    """Configuration viewer (admin only)."""
+    session = check_basic_auth(request)
+    if session is None:
+        return _unauthorized_response()
+    if not session.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    raw = config.get_config_data()
+
+    # Mask sensitive keys
+    for key in ("ANTHROPIC_API_KEY", "POSTER_ACCESS_TOKEN"):
+        if key in raw:
+            raw[key] = config.mask_api_key(raw[key])
+
+    # Mask password hashes in approved_users
+    for uid, entry in raw.get("approved_users", {}).items():
+        if "password_hash" in entry:
+            entry["password_hash"] = "****"
+
+    config_json = json.dumps(raw, indent=2, ensure_ascii=False)
+
+    return templates.TemplateResponse("config.html", {
+        "request": request,
+        "active_page": "config",
+        "config_json": config_json,
+        "username": session["username"],
+        "is_admin": session.get("is_admin", False),
+    })
+
+
 # ============================================================
 # Server lifecycle
 # ============================================================
