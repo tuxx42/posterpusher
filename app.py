@@ -2722,11 +2722,15 @@ async def dashboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     has_password = chat_id in config.dashboard_passwords
 
+    user = update.effective_user
+    username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
+
     if has_password:
         await update.message.reply_text(
             f"<b>Web Dashboard</b>\n\n"
             f'<a href="{dashboard_url}">Open Dashboard</a>\n\n'
-            f"<i>Log in with your Telegram username and the password you set via /setpassword.</i>",
+            f"Username: <code>{username}</code>\n"
+            f"Password: the one you set via /setpassword",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True
         )
@@ -2735,7 +2739,8 @@ async def dashboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"<b>Web Dashboard</b>\n\n"
             f"You need to set a password first.\n"
             f"Use: /setpassword &lt;your_password&gt;\n\n"
-            f"Then visit: {dashboard_url}",
+            f"Your login username will be: <code>{username}</code>\n"
+            f"Dashboard: {dashboard_url}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True
         )
@@ -2774,10 +2779,15 @@ async def setpassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     }
     save_config()
 
+    from dashboard import get_dashboard_url
+    dashboard_url = get_dashboard_url()
+
     await update.message.reply_text(
-        f"Dashboard password set for <b>{username}</b>.\n\n"
-        f"Use /dashboard to get the link.",
-        parse_mode=ParseMode.HTML
+        f"Dashboard password set.\n\n"
+        f"Username: <code>{username}</code>\n"
+        f"Dashboard: {dashboard_url}",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
     )
 
 
