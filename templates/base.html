@@ -6,6 +6,9 @@
     <title>{% block title %}POS Dashboard{% endblock %}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
     <style>
@@ -64,11 +67,11 @@
             gap: 0.5rem;
             margin: 0;
         }
-        .custom-range input[type="date"] {
+        .custom-range input[type="text"].flatpickr-input {
             padding: 0.3rem 0.5rem;
             font-size: 0.85rem;
             margin: 0;
-            width: auto;
+            width: 220px;
         }
         .custom-range button {
             padding: 0.3rem 0.8rem;

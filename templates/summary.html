@@ -12,11 +12,11 @@
     <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
 </div>
 <div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
-    <form method="get" action="/summary">
+    <form method="get" action="/summary" id="custom-range-form">
         <input type="hidden" name="period" value="custom">
-        <input type="date" name="date_from" value="{{ date_from_iso or '' }}" required>
-        <span style="opacity:0.5">to</span>
-        <input type="date" name="date_to" value="{{ date_to_iso or '' }}" required>
+        <input type="hidden" name="date_from" id="date_from" value="{{ date_from_iso or '' }}">
+        <input type="hidden" name="date_to" id="date_to" value="{{ date_to_iso or '' }}">
+        <input type="text" id="date-range-picker" placeholder="Select date range…" readonly required>
         <button type="submit">Go</button>
     </form>
 </div>
@@ -135,13 +135,29 @@
         renderPieChart('expensePieChart', expensePieData.labels, expensePieData.values.map(v => v / 100));
     }
 
+    // Flatpickr date range picker
+    const dfVal = document.getElementById('date_from').value;
+    const dtVal = document.getElementById('date_to').value;
+    const fp = flatpickr('#date-range-picker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: (dfVal && dtVal) ? [dfVal, dtVal] : [],
+        onChange: function(selectedDates) {
+            if (selectedDates.length === 2) {
+                const fmt = d => d.toISOString().slice(0, 10);
+                document.getElementById('date_from').value = fmt(selectedDates[0]);
+                document.getElementById('date_to').value = fmt(selectedDates[1]);
+            }
+        }
+    });
+
     // Custom date range toggle
     document.getElementById('custom-toggle').addEventListener('click', function(e) {
         e.preventDefault();
         const panel = document.getElementById('custom-range');
         const visible = panel.style.display !== 'none';
         panel.style.display = visible ? 'none' : 'flex';
-        if (!visible) panel.querySelector('input[type="date"]').focus();
+        if (!visible) fp.open();
     });
 </script>
 {% endblock %}
