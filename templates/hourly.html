@@ -7,8 +7,8 @@
 <!-- Period navigation -->
 <div class="period-nav">
     <a href="/hourly?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
-    <a href="/hourly?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>This Week</a>
-    <a href="/hourly?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>This Month</a>
+    <a href="/hourly?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>Last 7 Days</a>
+    <a href="/hourly?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>Last 30 Days</a>
     <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
 </div>
 <div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>

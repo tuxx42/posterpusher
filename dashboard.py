@@ -228,16 +228,15 @@ def _get_date_range(period: str):
         date_str = today.strftime('%Y%m%d')
         return date_str, date_str, today.strftime('%d %b %Y')
     elif period == "week":
-        # Monday of this week
-        monday = today - timedelta(days=today.weekday())
-        date_from = monday.strftime('%Y%m%d')
+        start = today - timedelta(days=6)
+        date_from = start.strftime('%Y%m%d')
         date_to = today.strftime('%Y%m%d')
-        return date_from, date_to, f"{monday.strftime('%d %b')} - {today.strftime('%d %b %Y')}"
+        return date_from, date_to, f"{start.strftime('%d %b')} - {today.strftime('%d %b %Y')}"
     elif period == "month":
-        first_day = today.replace(day=1)
-        date_from = first_day.strftime('%Y%m%d')
+        start = today - timedelta(days=29)
+        date_from = start.strftime('%Y%m%d')
         date_to = today.strftime('%Y%m%d')
-        return date_from, date_to, f"{first_day.strftime('%d %b')} - {today.strftime('%d %b %Y')}"
+        return date_from, date_to, f"{start.strftime('%d %b')} - {today.strftime('%d %b %Y')}"
     else:
         date_str = today.strftime('%Y%m%d')
         return date_str, date_str, today.strftime('%d %b %Y')
