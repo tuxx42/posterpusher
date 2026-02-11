@@ -871,13 +871,15 @@ async def page_products(request: Request, period: str = "today"):
     if session is None:
         return _unauthorized_response()
 
-    from app import fetch_product_sales, format_currency
+    from app import fetch_product_sales, fetch_product_catalog, format_currency
+    from collections import defaultdict
 
     if period not in ("today", "week", "month"):
         period = "today"
 
     date_from, date_to, display = _get_date_range(period)
     products_raw = await _run_sync(fetch_product_sales, date_from, date_to)
+    catalog = await _run_sync(fetch_product_catalog)
 
     # Process and sort
     product_list = []
@@ -932,6 +934,25 @@ async def page_products(request: Request, period: str = "today"):
     }
     pie_data = {"labels": pie_labels, "values": pie_values}
 
+    # Category breakdown from product catalog
+    cat_revenue = defaultdict(int)
+    cat_profit = defaultdict(int)
+    for p in products_raw:
+        revenue = int(p.get('payed_sum', 0) or 0)
+        profit = int(p.get('product_profit', 0) or 0)
+        if revenue > 0:
+            pid = str(p.get('product_id', ''))
+            cat = catalog.get(pid, "Uncategorized")
+            cat_revenue[cat] += revenue
+            cat_profit[cat] += profit
+
+    sorted_cats = sorted(cat_revenue.items(), key=lambda x: x[1], reverse=True)
+    category_data = {
+        "labels": [c[0] for c in sorted_cats],
+        "revenue": [c[1] for c in sorted_cats],
+        "profit": [cat_profit[c[0]] for c in sorted_cats],
+    } if sorted_cats else None
+
     return templates.TemplateResponse("products.html", {
         "request": request,
         "active_page": "products",
@@ -943,6 +964,7 @@ async def page_products(request: Request, period: str = "today"):
         "total_items": total_items,
         "bar_data": json.dumps(bar_data),
         "pie_data": json.dumps(pie_data),
+        "category_data": json.dumps(category_data) if category_data else "null",
         "format_currency": format_currency,
         "username": session["username"],
         "is_admin": session.get("is_admin", False),

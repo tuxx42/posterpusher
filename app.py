@@ -382,6 +382,28 @@ def fetch_product_sales(date_from, date_to=None):
         return []
 
 
+def fetch_product_catalog():
+    """Fetch the full product catalog from Poster to get category mappings.
+
+    Returns a dict mapping product_id (str) -> category_name (str).
+    """
+    url = f"{POSTER_API_URL}/menu.getProducts"
+    params = {"token": config.POSTER_ACCESS_TOKEN}
+
+    try:
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        products = data.get("response", [])
+        return {
+            str(p.get("product_id", "")): p.get("category_name", "Uncategorized") or "Uncategorized"
+            for p in products
+        }
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch product catalog: {e}")
+        return {}
+
+
 def fetch_stock_levels():
     """Fetch current stock/inventory levels from Poster API."""
     url = f"{POSTER_API_URL}/storage.getStorageLeftovers"
