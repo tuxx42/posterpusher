@@ -42,7 +42,7 @@
 {% if category_data != "null" %}
 <div class="card chart-container">
     <h6>Revenue by Category</h6>
-    <canvas id="categoryBarChart"></canvas>
+    <canvas id="categoryPieChart"></canvas>
 </div>
 {% endif %}
 
@@ -96,12 +96,9 @@
         renderPieChart('productsPieChart', pieData.labels, pieData.values.map(v => v / 100));
     }
 
-    // Revenue by category bar chart
+    // Revenue by category pie chart
     if (categoryData && categoryData.labels.length > 0) {
-        renderHorizontalBarChart('categoryBarChart', categoryData.labels, [
-            { label: 'Revenue', data: categoryData.revenue.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' },
-            { label: 'Profit', data: categoryData.profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
-        ]);
+        renderPieChart('categoryPieChart', categoryData.labels, categoryData.revenue.map(v => v / 100));
     }
 </script>
 {% endblock %}
