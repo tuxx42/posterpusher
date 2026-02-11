@@ -1037,12 +1037,18 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
-        # Send raw JSON as a separate message (with API keys masked)
+        # Send raw JSON as a separate message (with sensitive fields masked)
         display_config = config_data.copy()
         if display_config.get('ANTHROPIC_API_KEY'):
             display_config['ANTHROPIC_API_KEY'] = mask_api_key(display_config['ANTHROPIC_API_KEY'])
         if display_config.get('POSTER_ACCESS_TOKEN'):
             display_config['POSTER_ACCESS_TOKEN'] = mask_api_key(display_config['POSTER_ACCESS_TOKEN'])
+        # Strip password hashes from approved_users
+        if 'approved_users' in display_config:
+            display_config['approved_users'] = {
+                k: {kk: vv for kk, vv in v.items() if kk != 'password_hash'}
+                for k, v in display_config['approved_users'].items()
+            }
         raw_json = json.dumps(display_config, indent=2, ensure_ascii=False)
         # Telegram message limit is 4096 chars, truncate if needed
         if len(raw_json) > 4000:
@@ -2720,7 +2726,7 @@ async def dashboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     chat_id = str(update.effective_chat.id)
     dashboard_url = get_dashboard_url()
 
-    has_password = chat_id in config.dashboard_passwords
+    has_password = chat_id in config.approved_users and config.approved_users[chat_id].get("password_hash")
 
     user = update.effective_user
     username = f"@{user.username}" if user and user.username else f"id:{chat_id}"
@@ -2773,10 +2779,14 @@ async def setpassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     salt = os.urandom(16).hex()
     password_hash = _hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
 
-    config.dashboard_passwords[chat_id] = {
-        "username": username,
-        "password_hash": f"{salt}${password_hash}",
-    }
+    # Ensure user has an approved_users entry (admins may not have one yet)
+    if chat_id not in config.approved_users:
+        config.approved_users[chat_id] = {
+            'name': user.full_name if user else username,
+            'username': user.username if user else None,
+            'approved_at': datetime.now().isoformat(),
+        }
+    config.approved_users[chat_id]["password_hash"] = f"{salt}${password_hash}"
     save_config()
 
     from dashboard import get_dashboard_url

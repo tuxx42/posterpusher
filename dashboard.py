@@ -66,9 +66,9 @@ def _unauthorized_response():
 
 
 def check_basic_auth(request: Request) -> dict | None:
-    """Check HTTP Basic Auth credentials against dashboard_passwords.
+    """Check HTTP Basic Auth credentials against approved_users.
 
-    Returns {"user_id": str, "username": str} on success, None on failure.
+    Returns {"user_id": str, "username": str, "is_admin": bool} on success, None on failure.
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
@@ -76,14 +76,24 @@ def check_basic_auth(request: Request) -> dict | None:
 
     try:
         decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-        username, password = decoded.split(":", 1)
+        login_name, password = decoded.split(":", 1)
     except Exception:
         return None
 
-    # Look up user by username in dashboard_passwords
-    for chat_id, entry in config.dashboard_passwords.items():
-        if entry["username"] == username and _verify_password(password, entry["password_hash"]):
-            return {"user_id": chat_id, "username": username}
+    # Look up user by username in approved_users
+    # Login accepts "@username" (strip @) or "id:chatid"
+    for chat_id, entry in config.approved_users.items():
+        stored_hash = entry.get("password_hash")
+        if not stored_hash:
+            continue
+        stored_username = entry.get("username")
+        # Match "@tuxx" -> "tuxx", or "id:12345" -> chat_id
+        if stored_username and login_name == f"@{stored_username}":
+            if _verify_password(password, stored_hash):
+                return {"user_id": chat_id, "username": f"@{stored_username}", "is_admin": chat_id in config.admin_chat_ids}
+        elif login_name == f"id:{chat_id}":
+            if _verify_password(password, stored_hash):
+                return {"user_id": chat_id, "username": f"id:{chat_id}", "is_admin": chat_id in config.admin_chat_ids}
 
     return None
 
@@ -602,6 +612,7 @@ async def page_dashboard(request: Request):
         "format_currency": format_currency,
         "ws_url": ws_url,
         "username": session["username"],
+        "is_admin": session.get("is_admin", False),
     })
 
 
@@ -720,6 +731,7 @@ async def page_summary(
         "date_to_iso": date_to_iso,
         "format_currency": format_currency,
         "username": session["username"],
+        "is_admin": session.get("is_admin", False),
     })
 
 
@@ -775,6 +787,7 @@ async def page_hourly(
         "date_to_iso": date_to_iso,
         "format_currency": format_currency,
         "username": session["username"],
+        "is_admin": session.get("is_admin", False),
     })
 
 
@@ -859,6 +872,7 @@ async def page_products(request: Request, period: str = "today"):
         "pie_data": json.dumps(pie_data),
         "format_currency": format_currency,
         "username": session["username"],
+        "is_admin": session.get("is_admin", False),
     })
 
 

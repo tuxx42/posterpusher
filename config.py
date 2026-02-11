@@ -35,9 +35,6 @@ admin_chat_ids = set()
 approved_users = {}
 pending_requests = {}
 
-# Dashboard passwords: {chat_id: {"username": str, "password_hash": str}}
-dashboard_passwords = {}
-
 # Agent configuration defaults
 AGENT_DEFAULTS = {
     'daily_limit': 10,
@@ -225,9 +222,6 @@ def load_config():
                 pending_requests.clear()
                 pending_requests.update({str(k): v for k, v in cfg.get('pending_requests', {}).items()})
 
-                dashboard_passwords.clear()
-                dashboard_passwords.update({str(k): v for k, v in cfg.get('dashboard_passwords', {}).items()})
-
                 # Load theft detection state
                 notified_transaction_ids = set(cfg.get('notified_transaction_ids', []))
                 notified_transaction_date = cfg.get('notified_transaction_date')
@@ -278,8 +272,7 @@ def save_config():
             'last_seen_void_id': last_seen_void_id,
             'last_cash_balance': last_cash_balance,
             'last_alerted_transaction_id': last_alerted_transaction_id,
-            'last_alerted_expense_id': last_alerted_expense_id,
-            'dashboard_passwords': dashboard_passwords
+            'last_alerted_expense_id': last_alerted_expense_id
         }
         # Preserve API keys and log level from existing config
         if existing_config.get('ANTHROPIC_API_KEY'):
