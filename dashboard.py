@@ -894,8 +894,11 @@ async def page_products(request: Request, period: str = "today"):
         name = p.get('product_name', 'Unknown')
 
         if revenue > 0:
+            pid = str(p.get('product_id', ''))
+            cat = catalog.get(pid, "Uncategorized")
             product_list.append({
                 "product_name": name,
+                "category_name": cat,
                 "count": count,
                 "payed_sum": revenue,
                 "product_profit": profit,
@@ -905,6 +908,9 @@ async def page_products(request: Request, period: str = "today"):
             total_items += count
 
     product_list.sort(key=lambda x: x["payed_sum"], reverse=True)
+
+    # Collect unique categories for filter
+    categories = sorted(set(p["category_name"] for p in product_list))
 
     # Chart data
     # Dynamic pie cutoff: keep adding products until "Other" is ≤ 15% of total
@@ -962,6 +968,7 @@ async def page_products(request: Request, period: str = "today"):
         "total_items": total_items,
         "bar_data": json.dumps(bar_data),
         "pie_data": json.dumps(pie_data),
+        "categories": categories,
         "category_data": json.dumps(category_data) if category_data else "null",
         "format_currency": format_currency,
         "username": session["username"],

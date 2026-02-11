@@ -46,6 +46,18 @@
     <canvas id="productsBarChart"></canvas>
 </div>
 
+<!-- Category filter -->
+{% if categories|length > 1 %}
+<div style="margin-bottom: 1rem;">
+    <select id="categoryFilter" aria-label="Filter by category">
+        <option value="">All Categories</option>
+        {% for cat in categories %}
+        <option value="{{ cat }}">{{ cat }}</option>
+        {% endfor %}
+    </select>
+</div>
+{% endif %}
+
 <!-- Product table -->
 {% if products %}
 <div class="card">
@@ -54,6 +66,7 @@
             <tr>
                 <th data-sort="rank">#</th>
                 <th data-sort="product">Product</th>
+                <th data-sort="category">Category</th>
                 <th data-sort="qty">Qty</th>
                 <th data-sort="revenue">Revenue</th>
                 <th data-sort="profit">Profit</th>
@@ -62,9 +75,10 @@
         </thead>
         <tbody>
             {% for p in products %}
-            <tr>
+            <tr data-category="{{ p.category_name }}">
                 <td data-value="{{ loop.index }}">{{ loop.index }}</td>
                 <td>{{ p.product_name }}</td>
+                <td>{{ p.category_name }}</td>
                 <td data-value="{{ p.count }}">{{ "%.0f" | format(p.count) }}</td>
                 <td data-value="{{ p.payed_sum }}">{{ format_currency(p.payed_sum) }}</td>
                 <td data-value="{{ p.product_profit }}">{{ format_currency(p.product_profit) }}</td>
@@ -102,6 +116,26 @@
     // Revenue by category pie chart
     if (categoryData && categoryData.labels.length > 0) {
         renderPieChart('categoryPieChart', categoryData.labels, categoryData.revenue.map(v => v / 100));
+    }
+
+    // Category filter
+    const categoryFilter = document.getElementById('categoryFilter');
+    if (categoryFilter) {
+        categoryFilter.addEventListener('change', function() {
+            const selected = this.value;
+            const rows = document.querySelectorAll('.product-table tbody tr');
+            let rank = 0;
+            rows.forEach(function(row) {
+                if (!selected || row.dataset.category === selected) {
+                    row.style.display = '';
+                    rank++;
+                    row.children[0].textContent = rank;
+                    row.children[0].dataset.value = rank;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        });
     }
 </script>
 {% endblock %}
