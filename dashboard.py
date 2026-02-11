@@ -620,7 +620,7 @@ async def page_summary(
     expenses = calculate_expenses(finance_txns)
 
     daily = _build_daily_breakdown(closed)
-    hourly = _build_hourly_breakdown(closed) if period == "today" else None
+    hourly = _build_hourly_breakdown(closed)
 
     # Build expense-by-comment pie chart data
     from collections import defaultdict
