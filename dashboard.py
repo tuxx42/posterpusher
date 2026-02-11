@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException, Query, WebSocket, 
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 import config
 
@@ -1006,6 +1007,95 @@ async def page_config(request: Request):
         "username": session["username"],
         "is_admin": session.get("is_admin", False),
     })
+
+
+@dashboard_app.get("/chat", response_class=HTMLResponse)
+async def page_chat(request: Request):
+    """AI Chat page."""
+    session = check_basic_auth(request)
+    if session is None:
+        return _unauthorized_response()
+
+    user_id = str(session["user_id"])
+    used, limit = config.get_agent_usage(user_id)
+
+    return templates.TemplateResponse("chat.html", {
+        "request": request,
+        "active_page": "chat",
+        "usage_used": used,
+        "usage_limit": limit,
+        "username": session["username"],
+        "is_admin": session.get("is_admin", False),
+    })
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@dashboard_app.post("/api/chat")
+async def api_chat(body: ChatRequest, session: dict = Depends(require_auth)):
+    """Send a message to the AI agent and get a response."""
+    from agent import run_agent
+
+    user_id = str(session["user_id"])
+    message = body.message.strip()
+
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Rate limiting
+    allowed, remaining = config.check_agent_rate_limit(user_id)
+    if not allowed:
+        limits = config.get_agent_limits(user_id)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily limit reached ({limits['daily_limit']} requests/day). Try again tomorrow.",
+        )
+
+    config.record_agent_usage(user_id)
+    used, limit = config.get_agent_usage(user_id)
+
+    user_limits = config.get_agent_limits(user_id)
+    history = config.agent_conversations.get(user_id, [])
+
+    try:
+        response_text, updated_history, charts = await run_agent(
+            message,
+            config.ANTHROPIC_API_KEY,
+            config.POSTER_ACCESS_TOKEN,
+            history=history,
+            max_iterations=user_limits['max_iterations'],
+            source="dashboard",
+        )
+
+        config.agent_conversations[user_id] = updated_history
+
+        # Encode charts as base64 data URIs
+        chart_images = []
+        for chart_buf in charts:
+            chart_buf.seek(0)
+            b64 = base64.b64encode(chart_buf.read()).decode('utf-8')
+            chart_images.append(f"data:image/png;base64,{b64}")
+
+        return {
+            "response": response_text,
+            "charts": chart_images,
+            "usage": {"used": used, "limit": limit},
+        }
+
+    except Exception as e:
+        logger.error(f"Dashboard agent error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@dashboard_app.post("/api/chat/clear")
+async def api_chat_clear(session: dict = Depends(require_auth)):
+    """Clear conversation history for the current user."""
+    user_id = str(session["user_id"])
+    if user_id in config.agent_conversations:
+        del config.agent_conversations[user_id]
+    return {"status": "ok"}
 
 
 # ============================================================

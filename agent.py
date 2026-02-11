@@ -9,6 +9,26 @@ from charts import generate_generic_chart
 
 POSTER_API_URL = "https://joinposter.com/api"
 
+FORMATTING_TELEGRAM = """IMPORTANT - Use Telegram HTML formatting only:
+- <b>bold</b> for emphasis and headers
+- <i>italic</i> for secondary emphasis
+- <code>monospace</code> for numbers and IDs
+- Do NOT use Markdown (no ##, **, -, ```, etc.)
+- Use plain line breaks for lists, not bullet characters
+- Example list format:
+  <b>Items:</b>
+  Beer: 24 bottles
+  Wine: 12 bottles"""
+
+FORMATTING_MARKDOWN = """IMPORTANT - Use Markdown formatting:
+- Use **bold** for emphasis and headers
+- Use *italic* for secondary emphasis
+- Use `monospace` for numbers and IDs
+- Use ## for section headers
+- Use - for bullet lists
+- Use ```language blocks for code/data tables
+- Do NOT use HTML tags"""
+
 SYSTEM_PROMPT_TEMPLATE = """You are a helpful assistant for a bar/restaurant business using Poster POS system.
 You have READ-ONLY access to query the Poster API for sales, products, inventory, expenses, and cash register data.
 You cannot modify any data - only retrieve and analyze it.
@@ -34,16 +54,7 @@ Guidelines:
 - Timestamps from the API are already in local time - do NOT convert or assume UTC
 - Keep responses concise but informative
 
-IMPORTANT - Use Telegram HTML formatting only:
-- <b>bold</b> for emphasis and headers
-- <i>italic</i> for secondary emphasis
-- <code>monospace</code> for numbers and IDs
-- Do NOT use Markdown (no ##, **, -, ```, etc.)
-- Use plain line breaks for lists, not bullet characters
-- Example list format:
-  <b>Items:</b>
-  Beer: 24 bottles
-  Wine: 12 bottles
+{formatting_instructions}
 
 When presenting numerical data, ALWAYS use the plot_graph tool to create visualizations:
 - Use pie charts for showing proportions or market share
@@ -496,7 +507,7 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | t
         return json.dumps({"error": f"Tool execution failed: {str(e)}"})
 
 
-async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, model: str = "claude-sonnet-4-20250514", history: list = None, max_iterations: int = 5) -> tuple[str, list, list]:
+async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, model: str = "claude-sonnet-4-20250514", history: list = None, max_iterations: int = 5, source: str = "telegram") -> tuple[str, list, list]:
     """Run the Anthropic agent with tool calling.
 
     Args:
@@ -518,11 +529,13 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
     # Build system prompt with current date and iteration limit
     today = date.today()
     yesterday = today - timedelta(days=1)
+    formatting = FORMATTING_MARKDOWN if source == "dashboard" else FORMATTING_TELEGRAM
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         today=today.strftime('%B %d, %Y'),
         today_yyyymmdd=today.strftime('%Y%m%d'),
         yesterday_yyyymmdd=yesterday.strftime('%Y%m%d'),
-        max_iterations=max_iterations
+        max_iterations=max_iterations,
+        formatting_instructions=formatting
     )
 
     # Start with history (if provided) + new user message
