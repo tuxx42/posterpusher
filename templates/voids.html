@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Voids - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>Voided Transactions: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/voids?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/voids?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>Last 7 Days</a>
+    <a href="/voids?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>Last 30 Days</a>
+    <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
+</div>
+<div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
+    <form method="get" action="/voids" id="custom-range-form">
+        <input type="hidden" name="period" value="custom">
+        <input type="hidden" name="date_from" id="date_from" value="{{ date_from_iso or '' }}">
+        <input type="hidden" name="date_to" id="date_to" value="{{ date_to_iso or '' }}">
+        <input type="text" id="date-range-picker" placeholder="Select date range..." readonly required>
+        <button type="submit">Go</button>
+    </form>
+</div>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value" style="color: {% if void_count > 0 %}#f44336{% else %}#4CAF50{% endif %}">{{ void_count }}</p>
+        <p class="label">Voided Transactions</p>
+    </div>
+    <div class="card metric">
+        <p class="value" style="color: {% if total_lost > 0 %}#f44336{% else %}#4CAF50{% endif %}">{{ format_currency(total_lost) }}</p>
+        <p class="label">Lost Revenue</p>
+    </div>
+</div>
+
+<!-- Daily chart -->
+{% if daily_chart != "null" %}
+<div class="card chart-container">
+    <h6>Voids by Day</h6>
+    <canvas id="dailyChart"></canvas>
+</div>
+{% endif %}
+
+<!-- Void table -->
+{% if void_list %}
+<div class="card">
+    <table class="product-table sortable-table" role="grid">
+        <thead>
+            <tr>
+                <th data-sort="id">ID</th>
+                <th data-sort="date">Date</th>
+                <th data-sort="time">Time</th>
+                <th data-sort="table">Table</th>
+                <th data-sort="amount">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in void_list %}
+            <tr>
+                <td data-value="{{ v.transaction_id }}">{{ v.transaction_id }}</td>
+                <td>{{ v.date.split(' ')[0] if ' ' in v.date else v.date }}</td>
+                <td>{{ v.time }}</td>
+                <td>{{ v.table_name or '-' }}</td>
+                <td data-value="{{ v.amount }}">{{ format_currency(v.amount) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% elif void_count == 0 %}
+<div class="card" style="text-align:center; opacity:0.7; padding:2rem;">
+    No voided transactions for this period.
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const dailyChart = {{ daily_chart | safe }};
+
+    if (dailyChart && dailyChart.labels.length > 0) {
+        renderBarChart('dailyChart', dailyChart.labels, [
+            { label: 'Lost Revenue', data: dailyChart.amounts.map(v => v / 100), backgroundColor: 'rgba(244, 67, 54, 0.7)' },
+            { label: 'Void Count', data: dailyChart.counts, backgroundColor: 'rgba(255, 152, 0, 0.5)' }
+        ]);
+    }
+
+    // Flatpickr date range picker
+    const dfVal = document.getElementById('date_from').value;
+    const dtVal = document.getElementById('date_to').value;
+    const fp = flatpickr('#date-range-picker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: (dfVal && dtVal) ? [dfVal, dtVal] : [],
+        onChange: function(selectedDates) {
+            if (selectedDates.length === 2) {
+                const fmt = d => d.toISOString().slice(0, 10);
+                document.getElementById('date_from').value = fmt(selectedDates[0]);
+                document.getElementById('date_to').value = fmt(selectedDates[1]);
+            }
+        }
+    });
+
+    document.getElementById('custom-toggle').addEventListener('click', function(e) {
+        e.preventDefault();
+        const panel = document.getElementById('custom-range');
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'flex';
+        if (!visible) fp.open();
+    });
+</script>
+{% endblock %}

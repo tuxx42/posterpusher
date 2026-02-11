@@ -1009,6 +1009,97 @@ async def page_config(request: Request):
     })
 
 
+@dashboard_app.get("/voids", response_class=HTMLResponse)
+async def page_voids(
+    request: Request,
+    period: str = "month",
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+):
+    """Voided/removed transactions page."""
+    session = check_basic_auth(request)
+    if session is None:
+        return _unauthorized_response()
+
+    from app import fetch_removed_transactions, adjust_poster_time, format_currency
+    from collections import defaultdict
+
+    date_from_iso = ""
+    date_to_iso = ""
+    date_from_api = ""
+    date_to_api = ""
+    display = ""
+
+    if period == "custom" and date_from and date_to:
+        try:
+            df = datetime.strptime(date_from, "%Y-%m-%d")
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            date_from_iso = date_from
+            date_to_iso = date_to
+            date_from_api = df.strftime("%Y%m%d")
+            date_to_api = dt.strftime("%Y%m%d")
+            display = f"{df.strftime('%d %b')} - {dt.strftime('%d %b %Y')}"
+        except ValueError:
+            period = "month"
+    else:
+        if period not in ("today", "week", "month"):
+            period = "month"
+
+    if period != "custom":
+        date_from_api, date_to_api, display = _get_date_range(period)
+
+    removed = await _run_sync(fetch_removed_transactions, date_from_api, date_to_api)
+
+    # Process voided transactions
+    total_lost = 0
+    void_list = []
+    daily_voids = defaultdict(lambda: {"count": 0, "amount": 0})
+
+    for txn in removed:
+        amount = int(txn.get('sum', 0) or 0)
+        total_lost += amount
+        close_time = adjust_poster_time(txn.get('date_close_date', ''))
+        day = close_time.split(' ')[0] if ' ' in close_time else close_time
+        time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
+
+        daily_voids[day]["count"] += 1
+        daily_voids[day]["amount"] += amount
+
+        void_list.append({
+            "transaction_id": int(txn.get('transaction_id', 0) or 0),
+            "date": close_time,
+            "time": time_str,
+            "amount": amount,
+            "table_name": txn.get('table_name', ''),
+        })
+
+    void_list.sort(key=lambda x: x["date"], reverse=True)
+
+    # Daily chart
+    sorted_days = sorted(daily_voids.items())
+    daily_chart = {
+        "labels": [d[0] for d in sorted_days],
+        "counts": [d[1]["count"] for d in sorted_days],
+        "amounts": [d[1]["amount"] for d in sorted_days],
+    } if sorted_days else None
+
+    return templates.TemplateResponse("voids.html", {
+        "request": request,
+        "active_page": "voids",
+        "period": period,
+        "display": display,
+        "total_lost": total_lost,
+        "void_count": len(void_list),
+        "void_list": void_list,
+        "daily_chart": json.dumps(daily_chart) if daily_chart else "null",
+        "date_from_iso": date_from_iso,
+        "date_to_iso": date_to_iso,
+        "format_currency": format_currency,
+        "username": session["username"],
+        "is_admin": session.get("is_admin", False),
+    })
+
+
 @dashboard_app.get("/expenses", response_class=HTMLResponse)
 async def page_expenses(
     request: Request,
