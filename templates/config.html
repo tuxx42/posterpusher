@@ -2,19 +2,82 @@
 {% block title %}Config — POS Dashboard{% endblock %}
 {% block extra_head %}
 <style>
-    .config-raw {
+    .config-editor {
+        width: 100%;
+        min-height: 500px;
         background: var(--pico-card-background-color);
+        color: var(--pico-color);
+        border: 1px solid var(--pico-muted-border-color);
         border-radius: var(--pico-border-radius);
         padding: 1rem;
-        overflow-x: auto;
         font-size: 0.85rem;
         line-height: 1.5;
-        white-space: pre;
         font-family: monospace;
+        resize: vertical;
+        tab-size: 2;
     }
+    .config-actions {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-top: 0.75rem;
+    }
+    .config-actions button {
+        width: auto;
+        margin: 0;
+    }
+    .config-status {
+        font-size: 0.9rem;
+    }
+    .config-status.success { color: var(--pico-ins-color, #2a9d2a); }
+    .config-status.error { color: var(--pico-del-color, #c62828); }
 </style>
 {% endblock %}
 {% block content %}
 <h4>Configuration</h4>
-<pre class="config-raw">{{ config_json }}</pre>
+{% if is_admin %}
+<textarea id="configEditor" class="config-editor" spellcheck="false">{{ config_json }}</textarea>
+<div class="config-actions">
+    <button id="saveBtn" onclick="saveConfig()">Save</button>
+    <span id="configStatus" class="config-status"></span>
+</div>
+<script>
+function saveConfig() {
+    const btn = document.getElementById('saveBtn');
+    const status = document.getElementById('configStatus');
+    const editor = document.getElementById('configEditor');
+
+    btn.setAttribute('aria-busy', 'true');
+    btn.disabled = true;
+    status.textContent = '';
+    status.className = 'config-status';
+
+    fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({config: editor.value})
+    })
+    .then(r => r.json().then(data => ({ok: r.ok, status: r.status, data})))
+    .then(({ok, status: code, data}) => {
+        if (ok) {
+            status.textContent = 'Saved successfully.';
+            status.className = 'config-status success';
+        } else {
+            status.textContent = data.detail || ('Error ' + code);
+            status.className = 'config-status error';
+        }
+    })
+    .catch(err => {
+        status.textContent = 'Network error: ' + err.message;
+        status.className = 'config-status error';
+    })
+    .finally(() => {
+        btn.removeAttribute('aria-busy');
+        btn.disabled = false;
+    });
+}
+</script>
+{% else %}
+<pre style="background:var(--pico-card-background-color);border-radius:var(--pico-border-radius);padding:1rem;overflow-x:auto;font-size:0.85rem;line-height:1.5;white-space:pre;font-family:monospace;">{{ config_json }}</pre>
+{% endif %}
 {% endblock %}

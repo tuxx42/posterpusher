@@ -1009,6 +1009,59 @@ async def page_config(request: Request):
     })
 
 
+class ConfigUpdateRequest(BaseModel):
+    config: str
+
+
+@dashboard_app.post("/api/config")
+async def api_config_save(body: ConfigUpdateRequest, session: dict = Depends(require_auth)):
+    """Save config edits (admin only). Preserves masked secrets."""
+    if not session.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Parse submitted JSON
+    try:
+        submitted = json.loads(body.config)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    if not isinstance(submitted, dict):
+        raise HTTPException(status_code=400, detail="Config must be a JSON object")
+
+    # Read real config to protect masked secrets
+    real = config.get_config_data()
+
+    # Protect API keys: keep real value if submitted looks masked
+    for key in ("ANTHROPIC_API_KEY", "POSTER_ACCESS_TOKEN"):
+        real_val = real.get(key, "")
+        submitted_val = submitted.get(key, "")
+        if isinstance(submitted_val, str) and ("..." in submitted_val or submitted_val == "****"):
+            # Masked — preserve real value
+            if real_val:
+                submitted[key] = real_val
+            else:
+                submitted.pop(key, None)
+
+    # Protect password hashes: keep real hash if submitted is "****"
+    submitted_users = submitted.get("approved_users", {})
+    real_users = real.get("approved_users", {})
+    if isinstance(submitted_users, dict):
+        for uid, entry in submitted_users.items():
+            if isinstance(entry, dict) and entry.get("password_hash") == "****":
+                real_entry = real_users.get(uid, {})
+                if real_entry.get("password_hash"):
+                    entry["password_hash"] = real_entry["password_hash"]
+
+    # Write merged config
+    with open(config.CONFIG_FILE, 'w') as f:
+        json.dump(submitted, f, indent=2)
+
+    # Refresh in-memory state
+    config.load_config()
+
+    return {"status": "ok"}
+
+
 @dashboard_app.get("/voids", response_class=HTMLResponse)
 async def page_voids_redirect(request: Request, period: str = "month", date_from: str = Query(None), date_to: str = Query(None)):
     """Redirect old /voids URL to /alerts."""
