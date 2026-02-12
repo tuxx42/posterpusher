@@ -229,7 +229,7 @@ async def safe_send_message(bot, chat_id, text, parse_mode=None, **kwargs):
 # Theft detection thresholds
 LARGE_DISCOUNT_THRESHOLD = 20  # Alert if discount > 20%
 LARGE_REFUND_THRESHOLD = 50000  # Alert if refund > 500 THB (in cents)
-LARGE_EXPENSE_THRESHOLD = 100000  # Alert if single expense > 1000 THB (in cents)
+LARGE_EXPENSE_THRESHOLD = 300000  # Alert if single expense > 3000 THB (in cents)
 
 
 def format_currency(amount_in_cents, short=False):
