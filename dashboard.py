@@ -202,33 +202,44 @@ def _edit_distance(a, b):
     return prev[-1]
 
 
-def _merge_similar_labels(label_amounts):
-    """Merge expense labels that differ only by small typos.
+def _normalize_key(label):
+    """Build a comparison key that treats 'A & B' the same as 'B & A'."""
+    import re
+    lower = label.lower()
+    # Split on ' & ', ' and ', ' + ' separators
+    parts = re.split(r'\s+(?:&|and|\+)\s+', lower)
+    if len(parts) > 1:
+        return " & ".join(sorted(p.strip() for p in parts))
+    return lower
 
-    Uses case-insensitive comparison. Allowed edit distance scales with
-    string length: 1 for short labels (<=6 chars), 2 for longer ones.
-    The label with the highest total amount is kept as the canonical name.
+
+def _merge_similar_labels(label_amounts):
+    """Merge expense labels that differ only by small typos or ordering.
+
+    Handles: case differences, 'A & B' vs 'B & A', 'and' vs '&',
+    and small edit distance typos. The label with the highest total
+    amount is kept as the canonical display name.
     """
-    canonical = {}  # lowered_label -> (display_label, total_amount)
+    canonical = {}  # norm_key -> (display_label, total_amount)
     for label, amount in label_amounts.items():
-        lower = label.lower()
+        norm = _normalize_key(label)
         merged = False
         for key in list(canonical):
-            max_dist = 1 if max(len(lower), len(key)) <= 6 else 2
-            if _edit_distance(lower, key) <= max_dist:
+            max_dist = 1 if max(len(norm), len(key)) <= 6 else 2
+            if _edit_distance(norm, key) <= max_dist:
                 existing_label, existing_amount = canonical[key]
                 new_total = existing_amount + amount
                 # Keep the label that had more money as the canonical name
                 if amount > existing_amount:
-                    canonical[lower] = (label, new_total)
-                    if key != lower:
+                    canonical[norm] = (label, new_total)
+                    if key != norm:
                         del canonical[key]
                 else:
                     canonical[key] = (existing_label, new_total)
                 merged = True
                 break
         if not merged:
-            canonical[lower] = (label, amount)
+            canonical[norm] = (label, amount)
 
     from collections import defaultdict
     result = defaultdict(int)
