@@ -187,6 +187,56 @@ def _filter_closed_sales(transactions):
             if str(t.get('status', '')) in ('1', '2') and int(t.get('sum', 0) or 0) > 0]
 
 
+def _edit_distance(a, b):
+    """Compute Levenshtein edit distance between two strings."""
+    if len(a) < len(b):
+        return _edit_distance(b, a)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
+        prev = curr
+    return prev[-1]
+
+
+def _merge_similar_labels(label_amounts):
+    """Merge expense labels that differ only by small typos.
+
+    Uses case-insensitive comparison. Allowed edit distance scales with
+    string length: 1 for short labels (<=6 chars), 2 for longer ones.
+    The label with the highest total amount is kept as the canonical name.
+    """
+    canonical = {}  # lowered_label -> (display_label, total_amount)
+    for label, amount in label_amounts.items():
+        lower = label.lower()
+        merged = False
+        for key in list(canonical):
+            max_dist = 1 if max(len(lower), len(key)) <= 6 else 2
+            if _edit_distance(lower, key) <= max_dist:
+                existing_label, existing_amount = canonical[key]
+                new_total = existing_amount + amount
+                # Keep the label that had more money as the canonical name
+                if amount > existing_amount:
+                    canonical[lower] = (label, new_total)
+                    if key != lower:
+                        del canonical[key]
+                else:
+                    canonical[key] = (existing_label, new_total)
+                merged = True
+                break
+        if not merged:
+            canonical[lower] = (label, amount)
+
+    from collections import defaultdict
+    result = defaultdict(int)
+    for display_label, total in canonical.values():
+        result[display_label] = total
+    return result
+
+
 def _build_daily_breakdown(transactions):
     """Group transactions by date for Chart.js daily breakdown."""
     from app import adjust_poster_time
@@ -717,12 +767,15 @@ async def page_summary(
     shifts = await _run_sync(fetch_cash_shifts)
     cash_timeline = _build_cash_timeline(closed, finance_txns, shifts)
 
-    # Build expense-by-comment pie chart data
+    # Build expense-by-comment pie chart data with fuzzy label merging
     from collections import defaultdict
     expense_by_comment = defaultdict(int)
     for exp in expenses["expense_list"]:
         label = exp.get("comment") or exp.get("category") or "Uncategorized"
+        label = " ".join(label.split()).strip()  # normalize whitespace
         expense_by_comment[label] += exp["amount"]
+    # Merge labels that are near-duplicates (small edit distance)
+    expense_by_comment = _merge_similar_labels(expense_by_comment)
     # Sort by amount descending
     sorted_cats = sorted(expense_by_comment.items(), key=lambda x: x[1], reverse=True)
     expense_pie = {
