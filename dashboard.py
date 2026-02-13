@@ -194,7 +194,7 @@ def _build_daily_breakdown(transactions):
 
     daily = defaultdict(lambda: {"sales": 0, "profit": 0, "count": 0})
     for txn in transactions:
-        close_date = adjust_poster_time(txn.get('date_close_date', ''))
+        close_date = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
         day_key = close_date.split(' ')[0] if close_date else 'Unknown'
         daily[day_key]["sales"] += int(txn.get('sum', 0) or 0)
         daily[day_key]["profit"] += int(txn.get('total_profit', 0) or 0)
@@ -302,7 +302,7 @@ def _build_hourly_by_weekday(transactions):
     data = {day: {h: {"sales": 0, "profit": 0, "count": 0} for h in range(24)} for day in day_names}
 
     for txn in transactions:
-        close_date = adjust_poster_time(txn.get('date_close_date', ''))
+        close_date = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
         if ' ' in close_date:
             try:
                 dt = datetime.strptime(close_date, "%Y-%m-%d %H:%M:%S")
@@ -332,7 +332,7 @@ def _build_hourly_breakdown(transactions):
 
     hourly = {h: {"sales": 0, "profit": 0, "count": 0} for h in range(24)}
     for txn in transactions:
-        close_date = adjust_poster_time(txn.get('date_close_date', ''))
+        close_date = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
         if ' ' in close_date:
             try:
                 hour = int(close_date.split(' ')[1].split(':')[0])
@@ -369,7 +369,7 @@ async def api_sales_today(session: dict = Depends(require_auth)):
     result = []
     for txn in sales:
         txn_id = int(txn.get('transaction_id', 0) or 0)
-        close_time = adjust_poster_time(txn.get('date_close_date', ''))
+        close_time = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
 
         # Fetch items for each transaction
         items = []
@@ -588,7 +588,7 @@ async def page_dashboard(request: Request):
 
     feed_items = []
     for txn in closed:
-        close_time = adjust_poster_time(txn.get('date_close_date', ''))
+        close_time = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
         time_str = close_time.split(' ')[1][:5] if ' ' in close_time else ''
         payed_cash = int(txn.get('payed_cash', 0) or 0)
         payed_card = int(txn.get('payed_card', 0) or 0)
@@ -733,7 +733,7 @@ async def page_summary(
     # Build merged transactions list (sales + expenses) sorted by date
     all_transactions = []
     for txn in closed:
-        close_time = adjust_poster_time(txn.get('date_close_date', ''))
+        close_time = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
         all_transactions.append({
             "type": "sale",
             "date": close_time,

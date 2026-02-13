@@ -1388,7 +1388,7 @@ async def sales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         payed_cash = int(txn.get('payed_cash', 0) or 0)
         payed_card = int(txn.get('payed_card', 0) or 0)
         table_name = txn.get('table_name', '-')
-        close_time = adjust_poster_time(txn.get('date_close_date', ''))
+        close_time = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
 
         # Format time
         time_str = close_time.split(' ')[1][:5] if ' ' in close_time else '-'

@@ -29,7 +29,7 @@ def generate_sales_chart(transactions, date_from, date_to, title, finance_transa
         current += timedelta(days=1)
 
     for txn in transactions:
-        txn_date = txn.get('date_close_date', '')[:10]  # Get YYYY-MM-DD
+        txn_date = (txn.get('date_close_date', '') or txn.get('date', ''))[:10]  # Get YYYY-MM-DD
         if txn_date:
             try:
                 d = datetime.strptime(txn_date, '%Y-%m-%d').date()
