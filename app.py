@@ -250,8 +250,8 @@ def format_currency(amount_in_cents, short=False):
         return "฿0.00"
 
 
-# Business day cutoff hour (2am) - "today" means yesterday until this hour
-BUSINESS_DAY_CUTOFF_HOUR = 2
+# Business day cutoff hour (4am) - "today" means yesterday until this hour
+BUSINESS_DAY_CUTOFF_HOUR = 4
 
 
 def adjust_poster_time(timestamp_str):
@@ -268,7 +268,7 @@ def get_business_date():
     """Get the current business date in Bangkok time.
 
     For bars/restaurants that operate late, the business day doesn't end at midnight.
-    If current time is before BUSINESS_DAY_CUTOFF_HOUR (2am), return yesterday's date.
+    If current time is before BUSINESS_DAY_CUTOFF_HOUR (4am), return yesterday's date.
     """
     now = datetime.now(THAI_TZ)
     if now.hour < BUSINESS_DAY_CUTOFF_HOUR:
@@ -1317,7 +1317,7 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("⏳ Fetching raw transaction data...")
 
     transactions = [t for t in fetch_transactions(today_str)
-                    if str(t.get('status')) == '2']
+                    if str(t.get('status')) in ('1', '2')]
 
     if not transactions:
         await update.message.reply_text("No transactions found for today.")
@@ -1363,14 +1363,14 @@ async def sales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No transactions found for today.")
         return
 
-    # Filter for closed transactions with actual sales
+    # Filter for open and closed transactions with actual sales
     valid_sales = [
         t for t in transactions
-        if str(t.get('status')) == '2' and int(t.get('sum', 0) or 0) > 0
+        if str(t.get('status')) in ('1', '2') and int(t.get('sum', 0) or 0) > 0
     ]
 
     if not valid_sales:
-        await update.message.reply_text("No completed sales found for today.")
+        await update.message.reply_text("No sales found for today.")
         return
 
     # Sort by transaction_id descending (most recent first)
@@ -1452,12 +1452,12 @@ async def resend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No transactions found for today.")
         return
 
-    # Filter for closed transactions with actual sales (exclude voided with sum=0)
-    closed_txns = [t for t in transactions if str(t.get('status')) == '2' and int(t.get('sum', 0) or 0) > 0]
+    # Filter for open and closed transactions with actual sales (exclude voided with sum=0)
+    closed_txns = [t for t in transactions if str(t.get('status')) in ('1', '2') and int(t.get('sum', 0) or 0) > 0]
     closed_txns.sort(key=lambda x: int(x.get('transaction_id', 0)), reverse=True)
 
     if not closed_txns:
-        await update.message.reply_text("No closed transactions found for today.")
+        await update.message.reply_text("No transactions found for today.")
         return
 
     # Take requested count
@@ -1934,7 +1934,9 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     transactions = fetch_transactions(today_str)
     finance_txns = fetch_finance_transactions(today_str)
 
-    summary = calculate_summary(transactions)
+    active_txns = [t for t in transactions
+                   if str(t.get('status', '')) in ('1', '2') and int(t.get('sum', 0) or 0) > 0]
+    summary = calculate_summary(active_txns)
     expenses = calculate_expenses(finance_txns)
     message = format_summary_message(today_display, summary, expenses)
 

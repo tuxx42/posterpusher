@@ -97,8 +97,8 @@ def check_agent_rate_limit(user_id: str) -> tuple[bool, int]:
     Returns:
         (allowed, remaining): Whether request is allowed and remaining quota
     """
-    from datetime import date
-    today = date.today().isoformat()
+    from app import get_business_date
+    today = get_business_date().isoformat()
     user_id = str(user_id)
 
     # Get per-user daily limit
@@ -120,8 +120,8 @@ def check_agent_rate_limit(user_id: str) -> tuple[bool, int]:
 
 def record_agent_usage(user_id: str):
     """Record an /agent request for rate limiting."""
-    from datetime import date
-    today = date.today().isoformat()
+    from app import get_business_date
+    today = get_business_date().isoformat()
     user_id = str(user_id)
 
     if user_id not in agent_usage or agent_usage[user_id]['date'] != today:
@@ -136,8 +136,8 @@ def get_agent_usage(user_id: str) -> tuple[int, int]:
     Returns:
         (used, limit): Number used today and daily limit
     """
-    from datetime import date
-    today = date.today().isoformat()
+    from app import get_business_date
+    today = get_business_date().isoformat()
     user_id = str(user_id)
 
     # Get per-user daily limit

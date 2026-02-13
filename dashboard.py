@@ -182,9 +182,9 @@ def _get_date_range(period: str):
 
 
 def _filter_closed_sales(transactions):
-    """Filter transactions to only closed sales with sum > 0."""
+    """Filter transactions to open and closed sales with sum > 0."""
     return [t for t in transactions
-            if str(t.get('status', '')) == '2' and int(t.get('sum', 0) or 0) > 0]
+            if str(t.get('status', '')) in ('1', '2') and int(t.get('sum', 0) or 0) > 0]
 
 
 def _build_daily_breakdown(transactions):

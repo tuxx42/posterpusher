@@ -527,7 +527,8 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
     client = anthropic.Anthropic(api_key=anthropic_api_key)
 
     # Build system prompt with current date and iteration limit
-    today = date.today()
+    from app import get_business_date
+    today = get_business_date()
     yesterday = today - timedelta(days=1)
     formatting = FORMATTING_MARKDOWN if source == "dashboard" else FORMATTING_TELEGRAM
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
