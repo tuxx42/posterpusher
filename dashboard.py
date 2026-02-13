@@ -1413,18 +1413,20 @@ async def page_expenses(
     finance_txns = await _run_sync(fetch_finance_transactions, date_from_api, date_to_api)
     expenses = calculate_expenses(finance_txns)
 
-    # Group by category
+    # Group by category (with fuzzy merge)
     by_category = defaultdict(int)
     for exp in expenses["expense_list"]:
-        label = exp.get("category") or "Uncategorized"
+        label = " ".join((exp.get("category") or "Uncategorized").split()).strip()
         by_category[label] += exp["amount"]
+    by_category = _merge_similar_labels(by_category)
     sorted_categories = sorted(by_category.items(), key=lambda x: x[1], reverse=True)
 
-    # Group by comment (more granular)
+    # Group by comment (more granular, with fuzzy merge)
     by_comment = defaultdict(int)
     for exp in expenses["expense_list"]:
-        label = exp.get("comment") or exp.get("category") or "Uncategorized"
+        label = " ".join((exp.get("comment") or exp.get("category") or "Uncategorized").split()).strip()
         by_comment[label] += exp["amount"]
+    by_comment = _merge_similar_labels(by_comment)
     sorted_comments = sorted(by_comment.items(), key=lambda x: x[1], reverse=True)
 
     # Pie chart by category
