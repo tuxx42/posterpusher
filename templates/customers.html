@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Customers - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>Customers: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/customers?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/customers?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>Last 7 Days</a>
+    <a href="/customers?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>Last 30 Days</a>
+    <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
+</div>
+<div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
+    <form method="get" action="/customers" id="custom-range-form">
+        <input type="hidden" name="period" value="custom">
+        <input type="hidden" name="date_from" id="date_from" value="{{ date_from_iso or '' }}">
+        <input type="hidden" name="date_to" id="date_to" value="{{ date_to_iso or '' }}">
+        <input type="text" id="date-range-picker" placeholder="Select date range..." readonly required>
+        <button type="submit">Go</button>
+    </form>
+</div>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value">{{ total_customers }}</p>
+        <p class="label">Customers</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ total_closed }}</p>
+        <p class="label">Closed Tabs</p>
+    </div>
+    <div class="card metric">
+        <p class="value" {% if total_open > 0 %}style="color: #FF9800"{% endif %}>{{ total_open }}</p>
+        <p class="label">Open Tabs</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(total_sales, short=True) }}</p>
+        <p class="label">Total Sales</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(total_profit, short=True) }}</p>
+        <p class="label">Gross Profit</p>
+    </div>
+    <div class="card metric">
+        <p class="value" {% if total_open_amount > 0 %}style="color: #FF9800"{% endif %}>{{ format_currency(total_open_amount, short=True) }}</p>
+        <p class="label">Open Amount</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency((total_sales // total_closed) if total_closed > 0 else 0, short=True) }}</p>
+        <p class="label">Avg Ticket</p>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="charts-grid">
+    {% if customer_pie != "null" %}
+    <div class="card chart-container">
+        <h6>Revenue by Customer</h6>
+        <canvas id="customerPie"></canvas>
+    </div>
+    {% endif %}
+    {% if open_tab_data != "null" %}
+    <div class="card chart-container">
+        <h6>Open vs Closed by Customer</h6>
+        <canvas id="openTabChart"></canvas>
+    </div>
+    {% endif %}
+</div>
+
+{% if bar_data != "null" %}
+<div class="card chart-container">
+    <h6>Customer Revenue</h6>
+    <canvas id="customerBarChart"></canvas>
+</div>
+{% endif %}
+
+<!-- Customer table -->
+{% if customer_list %}
+<div class="card">
+    <table class="product-table sortable-table" role="grid">
+        <thead>
+            <tr>
+                <th data-sort="rank">#</th>
+                <th data-sort="name">Customer</th>
+                <th data-sort="closed">Closed</th>
+                <th data-sort="open">Open</th>
+                <th data-sort="sales">Total Sales</th>
+                <th data-sort="profit">Profit</th>
+                <th data-sort="avg">Avg Ticket</th>
+                <th data-sort="open_amt">Open Amount</th>
+                <th data-sort="last">Last Visit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in customer_list %}
+            <tr>
+                <td data-value="{{ loop.index }}">{{ loop.index }}</td>
+                <td>{{ c.name }}</td>
+                <td data-value="{{ c.closed_count }}">{{ c.closed_count }}</td>
+                <td data-value="{{ c.open_count }}" {% if c.open_count > 0 %}style="color: #FF9800"{% endif %}>{{ c.open_count }}</td>
+                <td data-value="{{ c.total_sales }}" style="text-align: right;">{{ format_currency(c.total_sales) }}</td>
+                <td data-value="{{ c.total_profit }}" style="text-align: right;">{{ format_currency(c.total_profit) }}</td>
+                <td data-value="{{ c.avg_ticket }}" style="text-align: right;">{{ format_currency(c.avg_ticket) }}</td>
+                <td data-value="{{ c.open_amount }}" style="text-align: right;" {% if c.open_amount > 0 %}class="badge-mixed"{% endif %}>{{ format_currency(c.open_amount) }}</td>
+                <td data-value="{{ c.last_visit }}">{{ c.last_visit.split(' ')[0] if ' ' in c.last_visit else c.last_visit }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p style="text-align:center; opacity:0.5;">No customer data for this period.</p>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const customerPie = {{ customer_pie | safe }};
+    const barData = {{ bar_data | safe }};
+    const openTabData = {{ open_tab_data | safe }};
+
+    if (customerPie && customerPie.labels.length > 0) {
+        renderPieChart('customerPie', customerPie.labels, customerPie.values.map(v => v / 100));
+    }
+
+    if (barData && barData.labels.length > 0) {
+        renderHorizontalBarChart('customerBarChart', barData.labels, [
+            { label: 'Revenue', data: barData.revenue.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' },
+            { label: 'Profit', data: barData.profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
+        ]);
+    }
+
+    if (openTabData && openTabData.labels.length > 0) {
+        renderBarChart('openTabChart', openTabData.labels, [
+            { label: 'Open Amount', data: openTabData.open.map(v => v / 100), backgroundColor: 'rgba(255, 152, 0, 0.7)' },
+            { label: 'Closed Sales', data: openTabData.closed.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' }
+        ]);
+    }
+
+    // Flatpickr date range picker
+    const dfVal = document.getElementById('date_from').value;
+    const dtVal = document.getElementById('date_to').value;
+    const fp = flatpickr('#date-range-picker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: (dfVal && dtVal) ? [dfVal, dtVal] : [],
+        onChange: function(selectedDates) {
+            if (selectedDates.length === 2) {
+                const fmt = d => d.toISOString().slice(0, 10);
+                document.getElementById('date_from').value = fmt(selectedDates[0]);
+                document.getElementById('date_to').value = fmt(selectedDates[1]);
+            }
+        }
+    });
+
+    document.getElementById('custom-toggle').addEventListener('click', function(e) {
+        e.preventDefault();
+        const panel = document.getElementById('custom-range');
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'flex';
+        if (!visible) fp.open();
+    });
+</script>
+{% endblock %}

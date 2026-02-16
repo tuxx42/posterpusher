@@ -1474,6 +1474,160 @@ async def page_expenses(
     })
 
 
+@dashboard_app.get("/customers", response_class=HTMLResponse)
+async def page_customers(
+    request: Request,
+    period: str = "month",
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+):
+    """Sales by customer page with open/closed tab breakdown."""
+    session = check_basic_auth(request)
+    if session is None:
+        return _unauthorized_response()
+
+    from app import fetch_transactions, adjust_poster_time, format_currency
+    from collections import defaultdict
+
+    date_from_iso = ""
+    date_to_iso = ""
+    date_from_api = ""
+    date_to_api = ""
+    display = ""
+
+    if period == "custom" and date_from and date_to:
+        try:
+            df = datetime.strptime(date_from, "%Y-%m-%d")
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            date_from_iso = date_from
+            date_to_iso = date_to
+            date_from_api = df.strftime("%Y%m%d")
+            date_to_api = dt.strftime("%Y%m%d")
+            display = f"{df.strftime('%d %b')} - {dt.strftime('%d %b %Y')}"
+        except ValueError:
+            period = "month"
+    else:
+        if period not in ("today", "week", "month"):
+            period = "month"
+
+    if period != "custom":
+        date_from_api, date_to_api, display = _get_date_range(period)
+
+    # Fetch ALL transactions (including open tabs)
+    transactions = await _run_sync(fetch_transactions, date_from_api, date_to_api)
+
+    # Group by table_name (customer/table)
+    customer_data = defaultdict(lambda: {
+        "total_sales": 0, "total_profit": 0,
+        "cash_paid": 0, "card_paid": 0,
+        "closed_count": 0, "open_count": 0, "open_amount": 0,
+        "last_visit": "",
+    })
+
+    for txn in transactions:
+        table_name = txn.get('table_name', '') or 'Walk-in'
+        amount = int(txn.get('sum', 0) or 0)
+        if amount <= 0:
+            continue
+
+        status = str(txn.get('status', ''))
+        close_date = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
+        entry = customer_data[table_name]
+
+        if status in ('1', '2'):
+            entry["closed_count"] += 1
+            entry["total_sales"] += amount
+            entry["total_profit"] += int(txn.get('total_profit', 0) or 0)
+            entry["cash_paid"] += int(txn.get('payed_cash', 0) or 0)
+            entry["card_paid"] += int(txn.get('payed_card', 0) or 0)
+        else:
+            entry["open_count"] += 1
+            entry["open_amount"] += amount
+
+        if close_date > entry["last_visit"]:
+            entry["last_visit"] = close_date
+
+    # Build sorted customer list
+    customer_list = []
+    for name, data in customer_data.items():
+        customer_list.append({
+            "name": name,
+            "closed_count": data["closed_count"],
+            "open_count": data["open_count"],
+            "total_sales": data["total_sales"],
+            "total_profit": data["total_profit"],
+            "open_amount": data["open_amount"],
+            "avg_ticket": data["total_sales"] // data["closed_count"] if data["closed_count"] > 0 else 0,
+            "last_visit": data["last_visit"],
+        })
+    customer_list.sort(key=lambda x: x["total_sales"], reverse=True)
+
+    # Aggregate metrics
+    total_customers = len(customer_list)
+    total_closed = sum(c["closed_count"] for c in customer_list)
+    total_open = sum(c["open_count"] for c in customer_list)
+    total_sales = sum(c["total_sales"] for c in customer_list)
+    total_profit = sum(c["total_profit"] for c in customer_list)
+    total_open_amount = sum(c["open_amount"] for c in customer_list)
+
+    # Revenue pie chart (dynamic cutoff)
+    pie_cutoff = min(len(customer_list), 8)
+    if total_sales > 0:
+        for i in range(pie_cutoff, len(customer_list)):
+            remaining = sum(c["total_sales"] for c in customer_list[i:])
+            if remaining / total_sales <= 0.15:
+                break
+            pie_cutoff = i + 1
+    pie_customers = customer_list[:pie_cutoff]
+    other_sales = sum(c["total_sales"] for c in customer_list[pie_cutoff:])
+    pie_labels = [c["name"] for c in pie_customers]
+    pie_values = [c["total_sales"] for c in pie_customers]
+    if other_sales > 0:
+        pie_labels.append("Other")
+        pie_values.append(other_sales)
+    customer_pie = {"labels": pie_labels, "values": pie_values} if pie_labels else None
+
+    # Horizontal bar chart (all customers)
+    bar_data = {
+        "labels": [c["name"] for c in customer_list],
+        "revenue": [c["total_sales"] for c in customer_list],
+        "profit": [c["total_profit"] for c in customer_list],
+    } if customer_list else None
+
+    # Open tabs chart (only customers with open tabs)
+    open_tab_data = None
+    customers_with_open = [c for c in customer_list if c["open_count"] > 0]
+    if customers_with_open:
+        customers_with_open.sort(key=lambda x: x["open_amount"], reverse=True)
+        open_tab_data = {
+            "labels": [c["name"] for c in customers_with_open],
+            "open": [c["open_amount"] for c in customers_with_open],
+            "closed": [c["total_sales"] for c in customers_with_open],
+        }
+
+    return templates.TemplateResponse("customers.html", {
+        "request": request,
+        "active_page": "customers",
+        "period": period,
+        "display": display,
+        "total_customers": total_customers,
+        "total_closed": total_closed,
+        "total_open": total_open,
+        "total_sales": total_sales,
+        "total_profit": total_profit,
+        "total_open_amount": total_open_amount,
+        "customer_list": customer_list,
+        "customer_pie": json.dumps(customer_pie) if customer_pie else "null",
+        "bar_data": json.dumps(bar_data) if bar_data else "null",
+        "open_tab_data": json.dumps(open_tab_data) if open_tab_data else "null",
+        "date_from_iso": date_from_iso,
+        "date_to_iso": date_to_iso,
+        "format_currency": format_currency,
+        "username": session["username"],
+        "is_admin": session.get("is_admin", False),
+    })
+
+
 @dashboard_app.get("/inventory", response_class=HTMLResponse)
 async def page_inventory(request: Request):
     """Inventory / stock levels page."""
