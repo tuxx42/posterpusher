@@ -14,7 +14,115 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
     <style>
         :root { --pico-font-size: 15px; }
-        nav { padding: 0.5rem 1rem; }
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 220px;
+            height: 100vh;
+            background: var(--pico-card-background-color);
+            border-right: 1px solid var(--pico-muted-border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            transition: transform 0.3s ease;
+            overflow-y: auto;
+        }
+        .sidebar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+        }
+        .sidebar-header strong { margin: 0; }
+        #sidebar-close {
+            background: none;
+            border: none;
+            color: var(--pico-color);
+            font-size: 1.3rem;
+            cursor: pointer;
+            padding: 0 0.3rem;
+            line-height: 1;
+        }
+        .sidebar-nav {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 0.5rem 0;
+        }
+        .sidebar-nav a {
+            display: block;
+            padding: 0.55rem 1rem;
+            text-decoration: none;
+            color: var(--pico-color);
+            font-size: 0.9rem;
+            transition: background 0.15s;
+        }
+        .sidebar-nav a:hover {
+            background: var(--pico-muted-border-color);
+        }
+        .sidebar-nav a[aria-current="page"] {
+            background: var(--pico-primary-background);
+            color: var(--pico-primary-inverse);
+        }
+        .sidebar-footer {
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--pico-muted-border-color);
+            font-size: 0.8rem;
+            opacity: 0.6;
+        }
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 99;
+        }
+        #sidebar-toggle {
+            position: fixed;
+            top: 0.7rem;
+            left: 0.7rem;
+            z-index: 98;
+            background: var(--pico-card-background-color);
+            border: 1px solid var(--pico-muted-border-color);
+            color: var(--pico-color);
+            font-size: 1.3rem;
+            cursor: pointer;
+            padding: 0.3rem 0.55rem;
+            border-radius: var(--pico-border-radius);
+            line-height: 1;
+            display: none;
+        }
+        /* Desktop: sidebar expanded by default */
+        main.container {
+            margin-left: 220px;
+            transition: margin-left 0.3s ease;
+        }
+        /* Collapsed state */
+        .sidebar-collapsed .sidebar {
+            transform: translateX(-100%);
+        }
+        .sidebar-collapsed main.container,
+        .sidebar-collapsed footer {
+            margin-left: 0;
+        }
+        .sidebar-collapsed #sidebar-toggle {
+            display: block;
+        }
+        /* Mobile */
+        @media (max-width: 768px) {
+            main.container, footer { margin-left: 0; }
+            .sidebar { transform: translateX(-100%); }
+            #sidebar-toggle { display: block; }
+            .sidebar-open .sidebar { transform: translateX(0); }
+            .sidebar-open .sidebar-overlay { display: block; }
+            .sidebar-open #sidebar-toggle { display: none; }
+        }
         .card {
             background: var(--pico-card-background-color);
             border-radius: var(--pico-border-radius);
@@ -110,29 +218,34 @@
         @media (max-width: 768px) {
             .charts-grid { grid-template-columns: 1fr; }
         }
-        footer { text-align: center; opacity: 0.5; font-size: 0.75rem; padding: 1rem; }
+        footer { text-align: center; opacity: 0.5; font-size: 0.75rem; padding: 1rem; margin-left: 220px; transition: margin-left 0.3s ease; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-    <nav>
-        <ul>
-            <li><strong>POS Dashboard</strong></li>
-        </ul>
-        <ul>
-            <li><a href="/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Live</a></li>
-            <li><a href="/summary" {% if active_page == 'summary' %}aria-current="page"{% endif %}>Summary</a></li>
-            <li><a href="/hourly" {% if active_page == 'hourly' %}aria-current="page"{% endif %}>Hourly</a></li>
-            <li><a href="/products" {% if active_page == 'products' %}aria-current="page"{% endif %}>Products</a></li>
-            <li><a href="/customers" {% if active_page == 'customers' %}aria-current="page"{% endif %}>Customers</a></li>
-            <li><a href="/expenses" {% if active_page == 'expenses' %}aria-current="page"{% endif %}>Expenses</a></li>
-            <li><a href="/alerts" {% if active_page == 'alerts' %}aria-current="page"{% endif %}>Alerts</a></li>
-            <li><a href="/inventory" {% if active_page == 'inventory' %}aria-current="page"{% endif %}>Inventory</a></li>
-            <li><a href="/chat" {% if active_page == 'chat' %}aria-current="page"{% endif %}>Chat</a></li>
-            {% if is_admin %}<li><a href="/config" {% if active_page == 'config' %}aria-current="page"{% endif %}>Config</a></li>{% endif %}
-            <li><small style="opacity:0.5">{% if is_admin %}&#x1f451; {% endif %}{{ username }}</small></li>
-        </ul>
-    </nav>
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <strong>POS Dashboard</strong>
+            <button id="sidebar-close" title="Collapse">&times;</button>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Live</a>
+            <a href="/summary" {% if active_page == 'summary' %}aria-current="page"{% endif %}>Summary</a>
+            <a href="/hourly" {% if active_page == 'hourly' %}aria-current="page"{% endif %}>Hourly</a>
+            <a href="/products" {% if active_page == 'products' %}aria-current="page"{% endif %}>Products</a>
+            <a href="/customers" {% if active_page == 'customers' %}aria-current="page"{% endif %}>Customers</a>
+            <a href="/expenses" {% if active_page == 'expenses' %}aria-current="page"{% endif %}>Expenses</a>
+            <a href="/alerts" {% if active_page == 'alerts' %}aria-current="page"{% endif %}>Alerts</a>
+            <a href="/inventory" {% if active_page == 'inventory' %}aria-current="page"{% endif %}>Inventory</a>
+            <a href="/chat" {% if active_page == 'chat' %}aria-current="page"{% endif %}>Chat</a>
+            {% if is_admin %}<a href="/config" {% if active_page == 'config' %}aria-current="page"{% endif %}>Config</a>{% endif %}
+        </nav>
+        <div class="sidebar-footer">
+            <small>{% if is_admin %}&#x1f451; {% endif %}{{ username }}</small>
+        </div>
+    </aside>
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+    <button id="sidebar-toggle" title="Menu">&#9776;</button>
     <main class="container">
         {% block content %}{% endblock %}
     </main>
@@ -153,9 +266,20 @@
             var doc = new DOMParser().parseFromString(html, 'text/html');
             // Swap title
             document.title = doc.title;
-            // Swap nav (updates active link)
-            var newNav = doc.querySelector('nav');
-            if (newNav) document.querySelector('nav').innerHTML = newNav.innerHTML;
+            // Update active sidebar link
+            var newActive = doc.querySelector('.sidebar-nav a[aria-current="page"]');
+            document.querySelectorAll('.sidebar-nav a').forEach(function(a) {
+                a.removeAttribute('aria-current');
+            });
+            if (newActive) {
+                var href = newActive.getAttribute('href');
+                var match = document.querySelector('.sidebar-nav a[href="' + href + '"]');
+                if (match) match.setAttribute('aria-current', 'page');
+            }
+            // Auto-close sidebar on mobile after navigation
+            if (window.innerWidth <= 768) {
+                document.body.classList.remove('sidebar-open');
+            }
             // Destroy existing charts before removing canvases
             destroyCharts();
             // Swap main content
@@ -229,6 +353,41 @@
         // Handle back/forward
         window.addEventListener('popstate', function() {
             navigate(location.href, false);
+        });
+    })();
+    // Sidebar toggle logic
+    (function() {
+        var body = document.body;
+        var toggle = document.getElementById('sidebar-toggle');
+        var close = document.getElementById('sidebar-close');
+        var overlay = document.getElementById('sidebar-overlay');
+        var isMobile = function() { return window.innerWidth <= 768; };
+
+        // Restore saved state on desktop
+        if (!isMobile() && localStorage.getItem('sidebar-collapsed') === '1') {
+            body.classList.add('sidebar-collapsed');
+        }
+
+        toggle.addEventListener('click', function() {
+            if (isMobile()) {
+                body.classList.add('sidebar-open');
+            } else {
+                body.classList.remove('sidebar-collapsed');
+                localStorage.setItem('sidebar-collapsed', '0');
+            }
+        });
+
+        close.addEventListener('click', function() {
+            if (isMobile()) {
+                body.classList.remove('sidebar-open');
+            } else {
+                body.classList.add('sidebar-collapsed');
+                localStorage.setItem('sidebar-collapsed', '1');
+            }
+        });
+
+        overlay.addEventListener('click', function() {
+            body.classList.remove('sidebar-open');
         });
     })();
     </script>
