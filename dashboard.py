@@ -1649,6 +1649,169 @@ async def page_customers(
     })
 
 
+@dashboard_app.get("/transactions", response_class=HTMLResponse)
+async def page_transactions(
+    request: Request,
+    period: str = "month",
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+):
+    """All transactions page with client-side filters and reactive charts."""
+    session = check_basic_auth(request)
+    if session is None:
+        return _unauthorized_response()
+
+    from app import fetch_transactions, fetch_clients, adjust_poster_time, format_currency
+
+    date_from_iso = ""
+    date_to_iso = ""
+    date_from_api = ""
+    date_to_api = ""
+    display = ""
+
+    if period == "custom" and date_from and date_to:
+        try:
+            df = datetime.strptime(date_from, "%Y-%m-%d")
+            dt = datetime.strptime(date_to, "%Y-%m-%d")
+            date_from_iso = date_from
+            date_to_iso = date_to
+            date_from_api = df.strftime("%Y%m%d")
+            date_to_api = dt.strftime("%Y%m%d")
+            display = f"{df.strftime('%d %b')} - {dt.strftime('%d %b %Y')}"
+        except ValueError:
+            period = "month"
+    else:
+        if period not in ("today", "week", "month"):
+            period = "month"
+
+    if period != "custom":
+        date_from_api, date_to_api, display = _get_date_range(period)
+
+    transactions = await _run_sync(fetch_transactions, date_from_api, date_to_api)
+    clients = await _run_sync(fetch_clients)
+
+    # Build client name lookup
+    client_names = {}
+    for c in clients:
+        cid = str(c.get('client_id', ''))
+        first = (c.get('firstname') or '').strip()
+        last = (c.get('lastname') or '').strip()
+        name = f"{first} {last}".strip() or f"Client #{cid}"
+        client_names[cid] = name
+
+    # Process each transaction into a row
+    txn_rows = []
+    total_sales = 0
+    total_profit = 0
+    open_count = 0
+    closed_count = 0
+    tables_set = set()
+    customers_set = set()
+    staff_set = set()
+
+    for txn in transactions:
+        amount = int(txn.get('sum', 0) or 0)
+        if amount <= 0:
+            continue
+
+        txn_id = int(txn.get('transaction_id', 0) or 0)
+        close_time = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
+        status = str(txn.get('status', ''))
+        profit = int(txn.get('total_profit', 0) or 0)
+        discount = int(txn.get('discount', 0) or 0)
+        payed_cash = int(txn.get('payed_cash', 0) or 0)
+        payed_card = int(txn.get('payed_card', 0) or 0)
+        table_name = txn.get('table_name', '') or ''
+        staff_name = txn.get('name', '') or ''
+
+        # Status label
+        if status in ('1', '2'):
+            status_label = "Closed"
+            closed_count += 1
+            total_sales += amount
+            total_profit += profit
+        else:
+            status_label = "Open"
+            open_count += 1
+
+        # Customer name from client_id
+        client_id = str(txn.get('client_id') or '0')
+        if client_id != '0' and client_id in client_names:
+            customer = client_names[client_id]
+        elif client_id != '0':
+            first = (txn.get('client_firstname') or '').strip()
+            last = (txn.get('client_lastname') or '').strip()
+            customer = f"{first} {last}".strip() or f"Client #{client_id}"
+        else:
+            customer = ""
+
+        # Payment type
+        if payed_card > 0 and payed_cash > 0:
+            payment_type = "Mixed"
+        elif payed_card > 0:
+            payment_type = "Card"
+        else:
+            payment_type = "Cash"
+
+        row = {
+            "id": txn_id,
+            "time": close_time,
+            "status_label": status_label,
+            "table": table_name,
+            "customer": customer,
+            "staff": staff_name,
+            "amount": amount,
+            "profit": profit,
+            "discount": discount,
+            "cash": payed_cash,
+            "card": payed_card,
+            "payment_type": payment_type,
+        }
+        txn_rows.append(row)
+
+        if table_name:
+            tables_set.add(table_name)
+        if customer:
+            customers_set.add(customer)
+        if staff_name:
+            staff_set.add(staff_name)
+
+    # Sort by time descending
+    txn_rows.sort(key=lambda x: x["time"], reverse=True)
+
+    # Metrics
+    txn_count = len(txn_rows)
+    avg_ticket = total_sales // closed_count if closed_count > 0 else 0
+
+    # Unique filter values (sorted)
+    filter_tables = sorted(tables_set)
+    filter_customers = sorted(customers_set)
+    filter_staff = sorted(staff_set)
+
+    return templates.TemplateResponse("transactions.html", {
+        "request": request,
+        "active_page": "transactions",
+        "period": period,
+        "display": display,
+        "txn_count": txn_count,
+        "closed_count": closed_count,
+        "open_count": open_count,
+        "total_sales": total_sales,
+        "total_profit": total_profit,
+        "avg_ticket": avg_ticket,
+        "txn_rows": txn_rows,
+        "txn_rows_json": json.dumps(txn_rows),
+        "filter_tables": filter_tables,
+        "filter_customers": filter_customers,
+        "filter_staff": filter_staff,
+        "date_from_iso": date_from_iso,
+        "date_to_iso": date_to_iso,
+        "format_currency": format_currency,
+        "username": session["username"],
+        "is_admin": session.get("is_admin", False),
+    })
+
+
 @dashboard_app.get("/inventory", response_class=HTMLResponse)
 async def page_inventory(request: Request):
     """Inventory / stock levels page."""

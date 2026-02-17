@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+{% block title %}Transactions - POS Dashboard{% endblock %}
+
+{% block content %}
+<h4>Transactions: {{ display }}</h4>
+
+<!-- Period navigation -->
+<div class="period-nav">
+    <a href="/transactions?period=today" {% if period == 'today' %}aria-current="true"{% endif %}>Today</a>
+    <a href="/transactions?period=week" {% if period == 'week' %}aria-current="true"{% endif %}>Last 7 Days</a>
+    <a href="/transactions?period=month" {% if period == 'month' %}aria-current="true"{% endif %}>Last 30 Days</a>
+    <a href="#" id="custom-toggle" {% if period == 'custom' %}aria-current="true"{% endif %}>Custom</a>
+</div>
+<div id="custom-range" class="custom-range" {% if period != 'custom' %}style="display:none"{% endif %}>
+    <form method="get" action="/transactions" id="custom-range-form">
+        <input type="hidden" name="period" value="custom">
+        <input type="hidden" name="date_from" id="date_from" value="{{ date_from_iso or '' }}">
+        <input type="hidden" name="date_to" id="date_to" value="{{ date_to_iso or '' }}">
+        <input type="text" id="date-range-picker" placeholder="Select date range..." readonly required>
+        <button type="submit">Go</button>
+    </form>
+</div>
+
+<!-- Metric cards -->
+<div class="grid-metrics">
+    <div class="card metric">
+        <p class="value">{{ txn_count }}</p>
+        <p class="label">Total Txns</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ closed_count }}</p>
+        <p class="label">Closed</p>
+    </div>
+    <div class="card metric">
+        <p class="value" {% if open_count > 0 %}style="color: #FF9800"{% endif %}>{{ open_count }}</p>
+        <p class="label">Open</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(total_sales, short=True) }}</p>
+        <p class="label">Total Sales</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(total_profit, short=True) }}</p>
+        <p class="label">Profit</p>
+    </div>
+    <div class="card metric">
+        <p class="value">{{ format_currency(avg_ticket, short=True) }}</p>
+        <p class="label">Avg Ticket</p>
+    </div>
+</div>
+
+<!-- Filter bar -->
+<div class="card" style="padding: 0.6rem 1rem; margin-bottom: 1rem;">
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+        <select id="filter-status" style="margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; width: auto;">
+            <option value="">All Status</option>
+            <option value="Closed">Closed</option>
+            <option value="Open">Open</option>
+        </select>
+        <select id="filter-payment" style="margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; width: auto;">
+            <option value="">All Payment</option>
+            <option value="Cash">Cash</option>
+            <option value="Card">Card</option>
+            <option value="Mixed">Mixed</option>
+        </select>
+        <select id="filter-table" style="margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; width: auto;">
+            <option value="">All Tables</option>
+            {% for t in filter_tables %}
+            <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+        </select>
+        <select id="filter-customer" style="margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; width: auto;">
+            <option value="">All Customers</option>
+            {% for c in filter_customers %}
+            <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+        <select id="filter-staff" style="margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; width: auto;">
+            <option value="">All Staff</option>
+            {% for s in filter_staff %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+        </select>
+        <span id="filter-count" style="font-size: 0.8rem; opacity: 0.7; margin-left: auto;">Showing {{ txn_count }} of {{ txn_count }}</span>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="charts-grid">
+    <div class="card chart-container">
+        <h6>Payment Type</h6>
+        <canvas id="paymentPie"></canvas>
+    </div>
+    <div class="card chart-container">
+        <h6>Daily Volume</h6>
+        <canvas id="dailyBar"></canvas>
+    </div>
+</div>
+
+<!-- Transaction table -->
+{% if txn_rows %}
+<div class="card">
+    <table class="product-table sortable-table" role="grid" id="txn-table">
+        <thead>
+            <tr>
+                <th data-sort="rank">#</th>
+                <th data-sort="time">Time</th>
+                <th data-sort="status">Status</th>
+                <th data-sort="table">Table</th>
+                <th data-sort="customer">Customer</th>
+                <th data-sort="staff">Staff</th>
+                <th data-sort="amount">Amount</th>
+                <th data-sort="profit">Profit</th>
+                <th data-sort="discount">Discount</th>
+                <th data-sort="payment">Payment</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in txn_rows %}
+            <tr data-status="{{ r.status_label }}"
+                data-payment="{{ r.payment_type }}"
+                data-table="{{ r.table }}"
+                data-customer="{{ r.customer }}"
+                data-staff="{{ r.staff }}"
+                data-amount="{{ r.amount }}"
+                data-profit="{{ r.profit }}"
+                data-date="{{ r.time.split(' ')[0] if ' ' in r.time else r.time }}">
+                <td data-value="{{ loop.index }}">{{ loop.index }}</td>
+                <td data-value="{{ r.time }}">{{ r.time }}</td>
+                <td>{{ r.status_label }}</td>
+                <td>{{ r.table or '-' }}</td>
+                <td>{{ r.customer or '-' }}</td>
+                <td>{{ r.staff or '-' }}</td>
+                <td data-value="{{ r.amount }}" style="text-align: right;">{{ format_currency(r.amount) }}</td>
+                <td data-value="{{ r.profit }}" style="text-align: right;">{{ format_currency(r.profit) }}</td>
+                <td data-value="{{ r.discount }}" style="text-align: right;">{% if r.discount > 0 %}{{ format_currency(r.discount) }}{% else %}-{% endif %}</td>
+                <td>
+                    <span class="{% if r.payment_type == 'Cash' %}badge-cash{% elif r.payment_type == 'Card' %}badge-card{% else %}badge-mixed{% endif %}">
+                        {{ r.payment_type }}
+                    </span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p style="text-align:center; opacity:0.5;">No transactions for this period.</p>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    var totalCount = {{ txn_count }};
+    var paymentChart = null;
+    var dailyChart = null;
+
+    // Filter logic
+    function applyFilters() {
+        var fStatus = document.getElementById('filter-status').value;
+        var fPayment = document.getElementById('filter-payment').value;
+        var fTable = document.getElementById('filter-table').value;
+        var fCustomer = document.getElementById('filter-customer').value;
+        var fStaff = document.getElementById('filter-staff').value;
+
+        var tbody = document.querySelector('#txn-table tbody');
+        if (!tbody) return;
+        var rows = tbody.querySelectorAll('tr');
+        var visible = 0;
+
+        rows.forEach(function(row) {
+            var show = true;
+            if (fStatus && row.dataset.status !== fStatus) show = false;
+            if (fPayment && row.dataset.payment !== fPayment) show = false;
+            if (fTable && row.dataset.table !== fTable) show = false;
+            if (fCustomer && row.dataset.customer !== fCustomer) show = false;
+            if (fStaff && row.dataset.staff !== fStaff) show = false;
+            row.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+
+        document.getElementById('filter-count').textContent = 'Showing ' + visible + ' of ' + totalCount;
+        rebuildCharts();
+    }
+
+    // Reactive charts
+    function rebuildCharts() {
+        var tbody = document.querySelector('#txn-table tbody');
+        if (!tbody) return;
+        var rows = tbody.querySelectorAll('tr');
+
+        // Aggregate visible rows
+        var paymentTotals = {};
+        var dailyTotals = {};
+
+        rows.forEach(function(row) {
+            if (row.style.display === 'none') return;
+            var amount = parseInt(row.dataset.amount || '0', 10);
+            var payment = row.dataset.payment || 'Cash';
+            var date = row.dataset.date || 'Unknown';
+
+            paymentTotals[payment] = (paymentTotals[payment] || 0) + amount;
+            dailyTotals[date] = (dailyTotals[date] || 0) + amount;
+        });
+
+        // Destroy existing charts
+        if (paymentChart) { paymentChart.destroy(); paymentChart = null; }
+        if (dailyChart) { dailyChart.destroy(); dailyChart = null; }
+
+        // Payment pie chart
+        var pieCanvas = document.getElementById('paymentPie');
+        if (pieCanvas) {
+            var pieLabels = Object.keys(paymentTotals);
+            var pieValues = pieLabels.map(function(k) { return paymentTotals[k] / 100; });
+            if (pieLabels.length > 0) {
+                var pieColors = pieLabels.map(function(label) {
+                    if (label === 'Cash') return 'rgba(76, 175, 80, 0.8)';
+                    if (label === 'Card') return 'rgba(33, 150, 243, 0.8)';
+                    return 'rgba(255, 152, 0, 0.8)';
+                });
+                var pieHover = pieColors.map(function(c) { return c.replace(/[\d.]+\)$/, '1)'); });
+                paymentChart = new Chart(pieCanvas, {
+                    type: 'doughnut',
+                    data: {
+                        labels: pieLabels,
+                        datasets: [{
+                            data: pieValues,
+                            backgroundColor: pieColors,
+                            hoverBackgroundColor: pieHover,
+                            borderWidth: 2,
+                            borderColor: 'rgba(0,0,0,0.3)',
+                            hoverBorderColor: '#fff',
+                            hoverOffset: 8,
+                            spacing: 2,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        animation: { animateRotate: true, animateScale: true, duration: 600, easing: 'easeOutQuart' },
+                        plugins: {
+                            legend: { position: 'right', labels: { color: '#ccc', font: { size: 11 }, usePointStyle: true, padding: 12 } },
+                            tooltip: {
+                                backgroundColor: 'rgba(0,0,0,0.85)',
+                                padding: 12, cornerRadius: 8,
+                                callbacks: {
+                                    label: function(ctx) {
+                                        var total = ctx.dataset.data.reduce(function(a, b) { return a + b; }, 0);
+                                        var pct = ((ctx.raw / total) * 100).toFixed(1);
+                                        return ' ' + ctx.label + ': ' + formatCurrency(ctx.raw * 100) + ' (' + pct + '%)';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Daily bar chart
+        var barCanvas = document.getElementById('dailyBar');
+        if (barCanvas) {
+            var sortedDays = Object.keys(dailyTotals).sort();
+            var barValues = sortedDays.map(function(k) { return dailyTotals[k] / 100; });
+            if (sortedDays.length > 0) {
+                dailyChart = new Chart(barCanvas, {
+                    type: 'bar',
+                    data: {
+                        labels: sortedDays,
+                        datasets: [{
+                            label: 'Sales',
+                            data: barValues,
+                            backgroundColor: 'rgba(33, 150, 243, 0.7)',
+                            hoverBackgroundColor: 'rgba(33, 150, 243, 1)',
+                            borderRadius: 4,
+                            borderSkipped: false,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        animation: { duration: 600, easing: 'easeOutQuart' },
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { labels: { color: '#ccc', usePointStyle: true, padding: 16 } },
+                            tooltip: {
+                                backgroundColor: 'rgba(0,0,0,0.85)',
+                                padding: 12, cornerRadius: 8,
+                                callbacks: {
+                                    label: function(ctx) {
+                                        return ' ' + ctx.dataset.label + ': ' + formatCurrency(ctx.raw * 100);
+                                    }
+                                }
+                            },
+                            zoom: typeof ZOOM_OPTIONS !== 'undefined' ? ZOOM_OPTIONS : {},
+                        },
+                        scales: {
+                            x: { ticks: { color: '#999' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                            y: {
+                                ticks: { color: '#999', callback: function(v) { return formatCurrency(v * 100); } },
+                                grid: { color: 'rgba(255,255,255,0.08)' }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    // Bind filter change events
+    ['filter-status', 'filter-payment', 'filter-table', 'filter-customer', 'filter-staff'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('change', applyFilters);
+    });
+
+    // Initial chart render
+    rebuildCharts();
+
+    // Flatpickr date range picker
+    var dfVal = document.getElementById('date_from');
+    var dtVal = document.getElementById('date_to');
+    if (dfVal && dtVal) {
+        var fp = flatpickr('#date-range-picker', {
+            mode: 'range',
+            dateFormat: 'Y-m-d',
+            defaultDate: (dfVal.value && dtVal.value) ? [dfVal.value, dtVal.value] : [],
+            onChange: function(selectedDates) {
+                if (selectedDates.length === 2) {
+                    var fmt = function(d) { return d.toISOString().slice(0, 10); };
+                    dfVal.value = fmt(selectedDates[0]);
+                    dtVal.value = fmt(selectedDates[1]);
+                }
+            }
+        });
+
+        var toggle = document.getElementById('custom-toggle');
+        if (toggle) {
+            toggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                var panel = document.getElementById('custom-range');
+                var visible = panel.style.display !== 'none';
+                panel.style.display = visible ? 'none' : 'flex';
+                if (!visible) fp.open();
+            });
+        }
+    }
+})();
+</script>
+{% endblock %}

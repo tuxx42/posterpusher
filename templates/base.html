@@ -230,6 +230,7 @@
         </div>
         <nav class="sidebar-nav">
             <a href="/" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Live</a>
+            <a href="/transactions" {% if active_page == 'transactions' %}aria-current="page"{% endif %}>Transactions</a>
             <a href="/summary" {% if active_page == 'summary' %}aria-current="page"{% endif %}>Summary</a>
             <a href="/hourly" {% if active_page == 'hourly' %}aria-current="page"{% endif %}>Hourly</a>
             <a href="/products" {% if active_page == 'products' %}aria-current="page"{% endif %}>Products</a>
