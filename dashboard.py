@@ -1486,7 +1486,7 @@ async def page_customers(
     if session is None:
         return _unauthorized_response()
 
-    from app import fetch_transactions, adjust_poster_time, format_currency
+    from app import fetch_transactions, fetch_clients, adjust_poster_time, format_currency
     from collections import defaultdict
 
     date_from_iso = ""
@@ -1513,10 +1513,20 @@ async def page_customers(
     if period != "custom":
         date_from_api, date_to_api, display = _get_date_range(period)
 
-    # Fetch ALL transactions (including open tabs)
+    # Fetch transactions and client list in parallel
     transactions = await _run_sync(fetch_transactions, date_from_api, date_to_api)
+    clients = await _run_sync(fetch_clients)
 
-    # Group by table_name (customer/table)
+    # Build client name lookup from clients API
+    client_names = {}
+    for c in clients:
+        cid = str(c.get('client_id', ''))
+        first = (c.get('firstname') or '').strip()
+        last = (c.get('lastname') or '').strip()
+        name = f"{first} {last}".strip() or f"Client #{cid}"
+        client_names[cid] = name
+
+    # Group transactions by client (customer), skip anonymous/walk-in
     customer_data = defaultdict(lambda: {
         "total_sales": 0, "total_profit": 0,
         "cash_paid": 0, "card_paid": 0,
@@ -1525,14 +1535,25 @@ async def page_customers(
     })
 
     for txn in transactions:
-        table_name = txn.get('table_name', '') or 'Walk-in'
         amount = int(txn.get('sum', 0) or 0)
         if amount <= 0:
             continue
 
+        # Determine customer name from client_id or transaction fields
+        client_id = str(txn.get('client_id') or '0')
+        if client_id == '0' or not client_id:
+            continue  # Skip walk-in / anonymous transactions
+
+        if client_id in client_names:
+            customer_name = client_names[client_id]
+        else:
+            first = (txn.get('client_firstname') or '').strip()
+            last = (txn.get('client_lastname') or '').strip()
+            customer_name = f"{first} {last}".strip() or f"Client #{client_id}"
+
         status = str(txn.get('status', ''))
         close_date = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
-        entry = customer_data[table_name]
+        entry = customer_data[customer_name]
 
         if status in ('1', '2'):
             entry["closed_count"] += 1

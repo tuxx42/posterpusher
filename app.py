@@ -456,6 +456,21 @@ def fetch_ingredient_usage(date_from, date_to=None):
         return []
 
 
+def fetch_clients():
+    """Fetch all customers from Poster marketing/CRM."""
+    url = f"{POSTER_API_URL}/clients.getClients"
+    params = {"token": config.POSTER_ACCESS_TOKEN}
+
+    try:
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", [])
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch clients: {e}")
+        return []
+
+
 def calculate_summary(transactions):
     """Calculate summary statistics from transactions."""
     total_sales = 0
