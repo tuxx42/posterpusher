@@ -208,7 +208,9 @@ Always provide a text summary alongside any chart.
 IMPORTANT - Optimize data requests to avoid running out of context:
 - ALWAYS use the 'fields' parameter to request only the fields you need for your analysis
 - This is especially critical for large date ranges or queries that may return many records
+- Use dot notation for nested fields: "products.product_name" keeps only product_name from each item in the products array
 - Example: poster_api(method="dash.getTransactions", params={{dateFrom: "..."}}, fields=["sum", "total_profit", "date_close_date"])
+- Example with nested: poster_api(method="dash.getTransactions", params={{dateFrom: "...", include_products: "true"}}, fields=["sum", "products.product_name", "products.num"])
 - For simple totals, you may only need 1-2 fields
 - For detailed breakdowns, request only the fields relevant to the breakdown
 """ + POSTER_API_REFERENCE
@@ -231,7 +233,7 @@ TOOLS = [
                 "fields": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional: filter response to only these field names to reduce data size"
+                    "description": "Optional: filter response to only these fields. Use dot notation for nested fields: 'products.product_name' keeps only product_name from each item in products array."
                 }
             },
             "required": ["method"]
@@ -429,15 +431,16 @@ def _adjust_timestamps(data):
 
 
 def _filter_fields(data, fields: list[str] | None):
-    """Filter API response to only include specified top-level fields.
+    """Filter API response fields using dot notation for nested access.
 
-    For lists of dicts (typical API responses), filters each dict to only
-    include the named keys. This inherently drops nested arrays/objects
-    (like products[], history[]) unless explicitly requested.
+    Supports:
+      - "sum"                → top-level field
+      - "products"           → entire nested array/object
+      - "products.product_name" → only product_name from each item in products
 
     Args:
         data: API response data (list or dict)
-        fields: List of field names to keep, or None for all fields
+        fields: List of field paths to keep, or None for all fields
 
     Returns:
         Filtered data with only requested fields
@@ -445,15 +448,49 @@ def _filter_fields(data, fields: list[str] | None):
     if fields is None:
         return data
 
-    fields_set = set(fields)
+    # Parse fields into top-level keys and nested sub-filters
+    # e.g. ["sum", "products.product_name", "products.num"]
+    # → top_level = {"sum"}, nested = {"products": {"product_name", "num"}}
+    top_level = set()
+    nested = {}
+    for f in fields:
+        if '.' in f:
+            parent, child = f.split('.', 1)
+            nested.setdefault(parent, set()).add(child)
+        else:
+            top_level.add(f)
+
+    # All keys we want to keep (both plain top-level and parents of nested)
+    keep_keys = top_level | set(nested.keys())
+
+    def _filter_dict(d):
+        result = {}
+        for k, v in d.items():
+            if k not in keep_keys:
+                continue
+            if k in nested:
+                # Apply sub-filter to nested value
+                sub_fields = nested[k]
+                if isinstance(v, list):
+                    result[k] = [
+                        {sk: sv for sk, sv in item.items() if sk in sub_fields}
+                        if isinstance(item, dict) else item
+                        for item in v
+                    ]
+                elif isinstance(v, dict):
+                    result[k] = {sk: sv for sk, sv in v.items() if sk in sub_fields}
+                else:
+                    result[k] = v
+            else:
+                result[k] = v
+        return result
 
     if isinstance(data, list):
-        return [{k: v for k, v in item.items() if k in fields_set}
-                if isinstance(item, dict) else item
+        return [_filter_dict(item) if isinstance(item, dict) else item
                 for item in data]
 
     if isinstance(data, dict):
-        return {k: v for k, v in data.items() if k in fields_set}
+        return _filter_dict(data)
 
     return data
 
