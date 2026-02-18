@@ -984,7 +984,7 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @require_admin
 async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /config command - show or set configuration."""
-    allowed_vars = ["ANTHROPIC_API_KEY", "POSTER_ACCESS_TOKEN"]
+    allowed_vars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY", "POSTER_ACCESS_TOKEN"]
 
     # Handle /config set <VAR> <VALUE>
     if context.args and len(context.args) >= 3 and context.args[0].lower() == "set":
@@ -995,8 +995,7 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text(
                 f"Unknown variable: {var_name}\n\n"
                 f"Allowed variables:\n"
-                f"• ANTHROPIC_API_KEY\n"
-                f"• POSTER_ACCESS_TOKEN"
+                + "\n".join(f"• {v}" for v in allowed_vars)
             )
             return
 
@@ -1017,8 +1016,7 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text(
                 f"Unknown variable: {var_name}\n\n"
                 f"Allowed variables:\n"
-                f"• ANTHROPIC_API_KEY\n"
-                f"• POSTER_ACCESS_TOKEN"
+                + "\n".join(f"• {v}" for v in allowed_vars)
             )
             return
 
@@ -1045,10 +1043,15 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         # API Keys section
         message += "<b>API Keys:</b>\n"
-        anthropic_key = config_data.get('ANTHROPIC_API_KEY') or config.ANTHROPIC_API_KEY
-        poster_key = config_data.get('POSTER_ACCESS_TOKEN') or config.POSTER_ACCESS_TOKEN
-        message += f"  • ANTHROPIC_API_KEY: <code>{mask_api_key(anthropic_key) if anthropic_key else 'Not set'}</code>\n"
-        message += f"  • POSTER_ACCESS_TOKEN: <code>{mask_api_key(poster_key) if poster_key else 'Not set'}</code>\n\n"
+        for key_name, cfg_attr in [
+            ('ANTHROPIC_API_KEY', config.ANTHROPIC_API_KEY),
+            ('OPENAI_API_KEY', config.OPENAI_API_KEY),
+            ('ELEVENLABS_API_KEY', config.ELEVENLABS_API_KEY),
+            ('POSTER_ACCESS_TOKEN', config.POSTER_ACCESS_TOKEN),
+        ]:
+            key_val = config_data.get(key_name) or cfg_attr
+            message += f"  • {key_name}: <code>{mask_api_key(key_val) if key_val else 'Not set'}</code>\n"
+        message += "\n"
 
         # Admin info - handle both old and new format
         admin_ids = set(config_data.get('admin_chat_ids', []))
@@ -1091,10 +1094,9 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         # Send raw JSON as a separate message (with sensitive fields masked)
         display_config = config_data.copy()
-        if display_config.get('ANTHROPIC_API_KEY'):
-            display_config['ANTHROPIC_API_KEY'] = mask_api_key(display_config['ANTHROPIC_API_KEY'])
-        if display_config.get('POSTER_ACCESS_TOKEN'):
-            display_config['POSTER_ACCESS_TOKEN'] = mask_api_key(display_config['POSTER_ACCESS_TOKEN'])
+        for key_name in ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ELEVENLABS_API_KEY', 'POSTER_ACCESS_TOKEN'):
+            if display_config.get(key_name):
+                display_config[key_name] = mask_api_key(display_config[key_name])
         # Strip password hashes from approved_users
         if 'approved_users' in display_config:
             display_config['approved_users'] = {
