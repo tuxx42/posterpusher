@@ -429,10 +429,11 @@ def _adjust_timestamps(data):
 
 
 def _filter_fields(data, fields: list[str] | None):
-    """Filter API response to only include specified fields, recursively.
+    """Filter API response to only include specified top-level fields.
 
-    Filters at every dict level — top-level and nested dicts within lists/values
-    all get the same field filter applied.
+    For lists of dicts (typical API responses), filters each dict to only
+    include the named keys. This inherently drops nested arrays/objects
+    (like products[], history[]) unless explicitly requested.
 
     Args:
         data: API response data (list or dict)
@@ -446,14 +447,15 @@ def _filter_fields(data, fields: list[str] | None):
 
     fields_set = set(fields)
 
-    def _filter(obj):
-        if isinstance(obj, list):
-            return [_filter(item) for item in obj]
-        if isinstance(obj, dict):
-            return {k: _filter(v) for k, v in obj.items() if k in fields_set}
-        return obj
+    if isinstance(data, list):
+        return [{k: v for k, v in item.items() if k in fields_set}
+                if isinstance(item, dict) else item
+                for item in data]
 
-    return _filter(data)
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k in fields_set}
+
+    return data
 
 
 MAX_HISTORY_RESULT_CHARS = 2000
