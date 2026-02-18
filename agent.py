@@ -29,6 +29,148 @@ FORMATTING_MARKDOWN = """IMPORTANT - Use Markdown formatting:
 - Use ```language blocks for code/data tables
 - Do NOT use HTML tags"""
 
+POSTER_API_REFERENCE = """
+## POSTER POS API REFERENCE
+
+All endpoints use HTTP GET. Dates: Ymd format (e.g. 20240115). Money values in cents (divide by 100).
+
+### DASHBOARD / REPORTS (dash.*)
+
+**dash.getTransactions** — List transactions/orders
+  Params: dateFrom (Ymd), dateTo (Ymd), status (0=all,1=open,2=closed,3=removed), type (waiters|spots|clients), id (entity ID when using type filter), include_products (bool), include_history (bool), service_mode (1=dine-in,2=takeout,3=delivery), next_tr (int, pagination cursor), table_id (int)
+  Response: transaction_id, date_close_date, status, sum (total cents), total_profit (cents), payed_cash, payed_card, payed_sum, pay_type (0=none,1=cash,2=card,3=mixed), guests_count, discount, spot_id, table_id, table_name, name (waiter), user_id (waiter ID), client_id, client_firstname, client_lastname, transaction_comment, service_mode, tip_sum, round_sum, products[] (if include_products), history[] (if include_history)
+
+**dash.getTransactionProducts** — Products in a specific transaction
+  Params: transaction_id (required)
+  Response: product_id, product_name, modification_id, modificator_name, num (qty), payed_sum, product_sum, product_cost, product_profit, discount, category_id, tax_value
+
+**dash.getTransactionHistory** — Operation history for a transaction
+  Params: transaction_id (required)
+  Response: transaction_id, type_history (open|close|delete|additem|deleteitem|changeitemcount|print|settable|setclient|comment|...), time (ms), value, value2, value3, value_text
+
+**dash.getProductsSales** — Product sales report
+  Params: date_from (Ymd), date_to (Ymd), spot_id
+  Response: product_id, product_name, modification_id, modificator_name, category_id, count (qty sold), payed_sum (revenue cents), product_sum (price cents), product_profit (cents), unit, weight_flag, discount
+
+**dash.getCategoriesSales** — Category sales report
+  Params: dateFrom (Ymd), dateTo (Ymd), spot_id
+  Response: category_id, category_name, revenue (cents), profit (cents), count
+
+**dash.getWaitersSales** — Sales by waiter
+  Params: dateFrom (Ymd), dateTo (Ymd)
+  Response: user_id, name, revenue (cents), profit (cents), clients (order count), middle_invoice (avg bill), middle_time (avg service mins), worked_time (total mins)
+
+**dash.getClientsSales** — Sales by customer
+  Params: dateFrom (Ymd), dateTo (Ymd)
+  Response: client_id, firstname, lastname, sum (cents), revenue (cents), profit (cents), clients (order count), middle_invoice
+
+### MENU / PRODUCTS (menu.*)
+
+**menu.getProducts** — All products and dishes
+  Params: category_id (int), type (products|batchtickets)
+  Response: product_id, product_name, menu_category_id, category_name, type (1=semi-finished,2=dish,3=product), cost (food cost cents), barcode, product_code, unit, weight_flag, photo, out (stock status), spots[] (spot_id, price, profit, visible), group_modifications[], ingredients[]
+
+**menu.getProduct** — Single product details
+  Params: product_id (required)
+  Response: same as menu.getProducts single object
+
+**menu.getCategories** — All product categories
+  Params: fiscal (0|1)
+  Response: category_id, category_name, category_photo, parent_category, category_hidden, sort_order, fiscal, nodiscount, tax_id, level
+
+**menu.getCategory** — Single category details
+  Params: category_id (required)
+  Response: same as menu.getCategories single object plus visible[] per-spot settings
+
+### CLIENTS / CUSTOMERS (clients.*)
+
+**clients.getClients** — Customer list
+  Params: num (limit), offset, group_id, phone, birthday (md format), client_id_only (bool), order_by (default: client_id), sort (asc|desc), loyalty_type (1=bonus,2=discount)
+  Response: client_id, firstname, lastname, phone, email, birthday, bonus (loyalty points cents), total_payed_sum (cents), discount_per, card_number, client_sex (0=unspec,1=male,2=female), country, city, address, client_groups_id, client_groups_name, loyalty_type, client_groups_discount, ewallet (cents), delete
+
+**clients.getClient** — Single customer details
+  Params: client_id (required)
+  Response: same as clients.getClients single object plus accumulation_products, prize_products[]
+
+**clients.getGroups** — Customer groups
+  Params: none
+  Response: client_groups_id, client_groups_name, client_groups_discount, loyalty_type (1=points,2=discount), birthday_bonus, count_groups_clients, use_ewallet, delete
+
+### FINANCE (finance.*)
+
+**finance.getCashShifts** — Register/cash shifts
+  Params: spot_id, dateFrom (Ymd), dateTo (Ymd)
+  Response: cash_shift_id, spot_id, date_start (Y-m-d H:i:s), date_end, amount_start (cents), amount_end (cents), amount_debit (income cents), amount_sell_cash, amount_sell_card, amount_credit (expense cents), amount_collection (safe drop cents), user_id_start, user_id_end, comment, spot_name
+
+**finance.getTransactions** — Financial transactions (income/expenses)
+  Params: account_id, category_id, type (0=expense,1=income), account_type (1=bank,2=card,3=cash), dateFrom (Ymd), dateTo (Ymd)
+  Response: transaction_id, account_id, category_id, type (0=expense,1=income), amount (cents), balance, date, comment, account_name, category_name, supplier_name
+
+**finance.getAccounts** — Financial accounts
+  Params: type (1=non-cash,2=bank card,3=cash)
+  Response: account_id, name, type, balance, currency_symbol, currency_code_iso
+
+**finance.getCategories** — Financial categories
+  Params: none
+  Response: category_id, name, parent_id, operations (1=income,2=expense,3=both), action, delete
+
+### STORAGE / INVENTORY (storage.*)
+
+**storage.getStorageLeftovers** — Current stock levels
+  Params: storage_id, type (1=product,2=dish,3=semi-finished,4=ingredient,5=product modifier), category_id, zero_leftovers (bool)
+  Response: ingredient_id, ingredient_name, ingredient_left (total qty), limit_value (low stock threshold), ingredient_unit (kg|p|l), ingredients_type, prime_cost (cents)
+
+**storage.getReportMovement** — Ingredient movement report
+  Params: dateFrom (Ymd), dateTo (Ymd), storage_id, type (1=ingredient,2=product,3=mod,4=dish,5=prep)
+  Response: ingredient_id, ingredient_name, start (opening balance), income (received), write_offs (used), end (closing balance), cost_start, cost_end
+
+**storage.getSupplies** — Supply records
+  Params: dateFrom (Ymd), dateTo (Ymd), limit, offset
+  Response: supply_id, storage_id, supplier_id, date, supply_sum (cents), supply_comment, storage_name, supplier_name, delete
+
+**storage.getSuppliers** — Supplier list
+  Params: none
+  Response: supplier_id, supplier_name, supplier_phone, supplier_adress, supplier_comment, supplier_code, supplier_tin, delete
+
+**storage.getManufactures** — Manufacturing records
+  Params: num (limit), offset
+  Response: manufacture_id, storage_name, storage_id, user_id, date, sum, products[] (ingredient_id, product_id, product_name, product_num, type)
+
+**storage.getWastes** — Waste records
+  Params: dateFrom (Ymd), dateTo (Ymd)
+  Response: waste_id, total_sum, user_id, storage_id, date, reason_id, reason_name, delete
+
+### LOCATIONS (spots.*)
+
+**spots.getSpots** — All locations/venues
+  Params: none
+  Response: spot_id, name, address
+
+**spots.getSpotTablesHalls** — Floor sections (halls/rooms)
+  Params: none
+  Response: hall_id, hall_name, hall_order, spot_id, delete
+
+**spots.getTableHallTables** — Tables
+  Params: spot_id, hall_id, without_deleted (0|1)
+  Response: table_id, table_num, table_title, spot_id, table_shape, hall_id, is_deleted
+
+### EMPLOYEES (access.*)
+
+**access.getEmployees** — Employee list
+  Params: none
+  Response: user_id, name, user_type (0=waiter,1=admin,2=marketer,3=storekeeper,4=floor admin,50=manager,90=owner), role_id, role_name, phone, last_in
+
+**access.getTablets** — POS registers/tablets
+  Params: none
+  Response: tablet_id, tablet_name, spot_id, type (mobile|default)
+
+### SETTINGS (settings.*)
+
+**settings.getAllSettings** — Account settings
+  Params: none
+  Response: COMPANY_ID, company_name, company_type (1=cafe/restaurant,2=store), FIZ_ADRESS_CITY, FIZ_ADRESS_PHONE, uses_tables, uses_cash_shifts, uses_taxes, tip_amount, timezones, lang, currency (currency_id, currency_name, currency_symbol, currency_code_iso)
+"""
+
 SYSTEM_PROMPT_TEMPLATE = """You are a helpful assistant for a bar/restaurant business using Poster POS system.
 You have READ-ONLY access to query the Poster API for sales, products, inventory, expenses, and cash register data.
 You cannot modify any data - only retrieve and analyze it.
@@ -40,7 +182,7 @@ IMPORTANT: You have a maximum of {max_iterations} tool calls for this request. P
 - Combine related queries if possible
 - If a request requires more data than you can fetch, answer with what you have and note what's missing
 
-When the user asks questions about the business, use the available tools to fetch the relevant data and provide a helpful summary.
+When the user asks questions about the business, use the poster_api tool with the appropriate method name and parameters from the API reference below.
 
 Guidelines:
 - Use appropriate date ranges when querying data (YYYYMMDD format)
@@ -66,151 +208,33 @@ Always provide a text summary alongside any chart.
 IMPORTANT - Optimize data requests to avoid running out of context:
 - ALWAYS use the 'fields' parameter to request only the fields you need for your analysis
 - This is especially critical for large date ranges or queries that may return many records
-- Example: get_transactions with fields: ["sum", "total_profit", "date_close_date"]
+- Example: poster_api(method="dash.getTransactions", params={{dateFrom: "..."}}, fields=["sum", "total_profit", "date_close_date"])
 - For simple totals, you may only need 1-2 fields
 - For detailed breakdowns, request only the fields relevant to the breakdown
-"""
+""" + POSTER_API_REFERENCE
 
 TOOLS = [
     {
-        "name": "get_transactions",
-        "description": "Get sales transactions for a date range. Returns list of transactions with totals, payment types, and timestamps.",
+        "name": "poster_api",
+        "description": "Call any Poster POS API method. Use the API reference in the system prompt to find the right method and parameters.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "date_from": {
+                "method": {
                     "type": "string",
-                    "description": "Start date in YYYYMMDD format"
+                    "description": "API method name, e.g. 'dash.getTransactions', 'menu.getProducts', 'clients.getClients'"
                 },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
+                "params": {
+                    "type": "object",
+                    "description": "Query parameters as key-value pairs, e.g. {\"dateFrom\": \"20240101\", \"dateTo\": \"20240131\"}. Do NOT include the token."
                 },
                 "fields": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Fields to include. Available: transaction_id (unique ID), sum (total amount in satang), total_profit (profit in satang), payed_cash (cash paid), payed_card (card paid), date_close_date (closing timestamp YYYY-MM-DD HH:MM:SS), status (2=closed)"
+                    "description": "Optional: filter response to only these field names to reduce data size"
                 }
             },
-            "required": ["date_from"]
-        }
-    },
-    {
-        "name": "get_product_sales",
-        "description": "Get product-level sales data for a date range. Returns which products were sold and quantities.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "date_from": {
-                    "type": "string",
-                    "description": "Start date in YYYYMMDD format"
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
-                },
-                "fields": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Fields to include. Available: product_id (unique ID), product_name (name), payed_sum (revenue in satang), product_profit (profit in satang), num (quantity sold)"
-                }
-            },
-            "required": ["date_from"]
-        }
-    },
-    {
-        "name": "get_stock_levels",
-        "description": "Get current inventory/stock levels for all ingredients and products.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "fields": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Fields to include. Available: ingredient_id (unique ID), ingredient_name (name), storage_ingredient_left (current stock quantity), storage_ingredient_unit (unit of measurement)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_ingredient_usage",
-        "description": "Get ingredient usage/movement report for a date range. Shows how ingredients were consumed.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "date_from": {
-                    "type": "string",
-                    "description": "Start date in YYYYMMDD format"
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
-                },
-                "fields": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Fields to include. Available: ingredient_id (unique ID), ingredient_name (name), write_offs (quantity used), start (opening balance), income (received), end (closing balance)"
-                }
-            },
-            "required": ["date_from"]
-        }
-    },
-    {
-        "name": "get_finance_transactions",
-        "description": "Get finance transactions including expenses and income for a date range.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "date_from": {
-                    "type": "string",
-                    "description": "Start date in YYYYMMDD format"
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date in YYYYMMDD format (optional, defaults to date_from)"
-                },
-                "fields": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Fields to include. Available: transaction_id (unique ID), amount (in satang, negative=expense), comment (description), category_name (expense category), date (YYYY-MM-DD HH:MM:SS)"
-                }
-            },
-            "required": ["date_from"]
-        }
-    },
-    {
-        "name": "get_cash_shifts",
-        "description": "Get cash register shift data including opening/closing amounts.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "fields": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Fields to include. Available: shift_id (unique ID), date_start (shift open time), date_end (shift close time), cash_start (opening cash), cash_end (closing cash)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_transaction_products",
-        "description": "Get products/items included in a specific transaction.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "transaction_id": {
-                    "type": "string",
-                    "description": "The transaction ID to get products for"
-                },
-                "fields": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Fields to include. Available: product_id (unique ID), product_name (name), num (quantity), payed_sum (line total in satang)"
-                }
-            },
-            "required": ["transaction_id"]
+            "required": ["method"]
         }
     },
     {
@@ -386,13 +410,7 @@ def _filter_fields(data, fields: list[str] | None):
 
 # Whitelist of allowed read-only tools
 ALLOWED_TOOLS = {
-    "get_transactions",
-    "get_product_sales",
-    "get_stock_levels",
-    "get_ingredient_usage",
-    "get_finance_transactions",
-    "get_cash_shifts",
-    "get_transaction_products",
+    "poster_api",
     "plot_graph",
 }
 
@@ -437,48 +455,12 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | t
             else:
                 return json.dumps({"error": "Failed to generate chart. Charts may not be available."})
 
-        if tool_name == "get_transactions":
-            url = f"{POSTER_API_URL}/dash.getTransactions"
-            params = {
-                "token": poster_token,
-                "dateFrom": tool_input.get("date_from"),
-                "dateTo": tool_input.get("date_to", tool_input.get("date_from"))
-            }
-        elif tool_name == "get_product_sales":
-            url = f"{POSTER_API_URL}/dash.getProductsSales"
-            params = {
-                "token": poster_token,
-                "dateFrom": tool_input.get("date_from"),
-                "dateTo": tool_input.get("date_to", tool_input.get("date_from"))
-            }
-        elif tool_name == "get_stock_levels":
-            url = f"{POSTER_API_URL}/storage.getStorageLeftovers"
-            params = {"token": poster_token}
-        elif tool_name == "get_ingredient_usage":
-            url = f"{POSTER_API_URL}/storage.getReportMovement"
-            params = {
-                "token": poster_token,
-                "dateFrom": tool_input.get("date_from"),
-                "dateTo": tool_input.get("date_to", tool_input.get("date_from"))
-            }
-        elif tool_name == "get_finance_transactions":
-            url = f"{POSTER_API_URL}/finance.getTransactions"
-            params = {
-                "token": poster_token,
-                "dateFrom": tool_input.get("date_from"),
-                "dateTo": tool_input.get("date_to", tool_input.get("date_from"))
-            }
-        elif tool_name == "get_cash_shifts":
-            url = f"{POSTER_API_URL}/finance.getCashShifts"
-            params = {"token": poster_token}
-        elif tool_name == "get_transaction_products":
-            url = f"{POSTER_API_URL}/dash.getTransactionProducts"
-            params = {
-                "token": poster_token,
-                "transaction_id": tool_input.get("transaction_id")
-            }
-        else:
-            return json.dumps({"error": f"Unknown tool: {tool_name}"})
+        method = tool_input.get("method")
+        if not method:
+            return json.dumps({"error": "Missing required 'method' parameter"})
+        url = f"{POSTER_API_URL}/{method}"
+        params = dict(tool_input.get("params", {}))
+        params["token"] = poster_token
 
         response = requests.get(url, params=params, timeout=15)
         response.raise_for_status()
