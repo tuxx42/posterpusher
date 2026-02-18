@@ -327,18 +327,60 @@ def _clean_orphaned_messages(messages: list) -> list:
     return cleaned
 
 
-def _trim_history(messages: list, max_messages: int = 10) -> list:
-    """Trim message history while keeping tool_use/tool_result pairs intact.
+def _compress_history_results(messages: list) -> list:
+    """Compress tool results in message history to reduce token usage."""
+    compressed = []
+    for msg in messages:
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            new_content = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    block = dict(block)
+                    block["content"] = _compress_tool_result(block.get("content", ""))
+                new_content.append(block)
+            compressed.append({**msg, "content": new_content})
+        else:
+            compressed.append(msg)
+    return compressed
+
+
+def _estimate_chars(messages: list) -> int:
+    """Estimate total character count of messages."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    total += len(str(block.get("content", "")))
+                    total += len(str(block.get("text", "")))
+                    total += len(json.dumps(block.get("input", {}))) if block.get("input") else 0
+    return total
+
+
+def _trim_history(messages: list, max_messages: int = 10, max_chars: int = 30000) -> list:
+    """Trim message history by count and character budget.
 
     The API requires that every tool_result has a corresponding tool_use in the
     previous assistant message. Naive trimming can break this pairing.
     """
-    if len(messages) <= max_messages:
-        return messages
+    # First compress tool results
+    compressed = _compress_history_results(messages)
 
-    # Take the last N messages, then clean any orphaned messages
-    trimmed = messages[-max_messages:]
-    return _clean_orphaned_messages(trimmed)
+    # Trim by message count
+    if len(compressed) > max_messages:
+        compressed = compressed[-max_messages:]
+        compressed = _clean_orphaned_messages(compressed)
+
+    # Trim by character budget — drop oldest messages until under budget
+    while len(compressed) > 2 and _estimate_chars(compressed) > max_chars:
+        compressed = compressed[1:]
+        compressed = _clean_orphaned_messages(compressed)
+
+    return compressed
 
 
 # Timestamp fields that need timezone correction
@@ -387,7 +429,10 @@ def _adjust_timestamps(data):
 
 
 def _filter_fields(data, fields: list[str] | None):
-    """Filter API response to only include specified fields.
+    """Filter API response to only include specified fields, recursively.
+
+    Filters at every dict level — top-level and nested dicts within lists/values
+    all get the same field filter applied.
 
     Args:
         data: API response data (list or dict)
@@ -399,13 +444,52 @@ def _filter_fields(data, fields: list[str] | None):
     if fields is None:
         return data
 
+    fields_set = set(fields)
+
+    def _filter(obj):
+        if isinstance(obj, list):
+            return [_filter(item) for item in obj]
+        if isinstance(obj, dict):
+            return {k: _filter(v) for k, v in obj.items() if k in fields_set}
+        return obj
+
+    return _filter(data)
+
+
+MAX_HISTORY_RESULT_CHARS = 2000
+
+
+def _compress_tool_result(result: str) -> str:
+    """Compress a tool result for storage in conversation history.
+
+    Large API responses are summarized to avoid bloating the context window
+    on subsequent requests.
+    """
+    if len(result) <= MAX_HISTORY_RESULT_CHARS:
+        return result
+
+    # Try to parse as JSON and summarize
+    try:
+        data = json.loads(result)
+    except (json.JSONDecodeError, ValueError):
+        return result[:MAX_HISTORY_RESULT_CHARS] + "... (compressed for history)"
+
     if isinstance(data, list):
-        return [_filter_fields(item, fields) for item in data]
+        # Keep first 3 records as sample + record count
+        sample = data[:3]
+        summary = json.dumps(sample, ensure_ascii=False)
+        if len(summary) > MAX_HISTORY_RESULT_CHARS:
+            summary = summary[:MAX_HISTORY_RESULT_CHARS]
+        return f"{summary}\n({len(data)} records total, showing first 3)"
 
     if isinstance(data, dict):
-        return {k: v for k, v in data.items() if k in fields}
+        # Keep just the keys and a truncated version
+        summary = json.dumps(data, ensure_ascii=False)
+        if len(summary) > MAX_HISTORY_RESULT_CHARS:
+            summary = summary[:MAX_HISTORY_RESULT_CHARS] + "..."
+        return summary
 
-    return data
+    return result[:MAX_HISTORY_RESULT_CHARS] + "... (compressed for history)"
 
 
 # Whitelist of allowed read-only tools
@@ -477,10 +561,24 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | t
         if fields:
             result = _filter_fields(result, fields)
 
-        # Limit response size to avoid token limits
-        result_str = json.dumps(result, ensure_ascii=False)
-        if len(result_str) > 50000:
-            result_str = result_str[:50000] + "... (truncated)"
+        # Limit response size to avoid token bloat
+        MAX_RESULT_CHARS = 15000
+        if isinstance(result, list) and len(json.dumps(result, ensure_ascii=False)) > MAX_RESULT_CHARS:
+            # Truncate list at record boundaries instead of mid-JSON
+            truncated = []
+            total_len = 2  # for []
+            for item in result:
+                item_str = json.dumps(item, ensure_ascii=False)
+                if total_len + len(item_str) + 2 > MAX_RESULT_CHARS:
+                    break
+                truncated.append(item)
+                total_len += len(item_str) + 2
+            result_str = json.dumps(truncated, ensure_ascii=False)
+            result_str += f"\n(showing {len(truncated)} of {len(result)} records, use 'fields' param to reduce size)"
+        else:
+            result_str = json.dumps(result, ensure_ascii=False)
+            if len(result_str) > MAX_RESULT_CHARS:
+                result_str = result_str[:MAX_RESULT_CHARS] + "... (truncated)"
         return result_str
 
     except requests.RequestException as e:
