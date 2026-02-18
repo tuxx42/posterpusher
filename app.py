@@ -94,15 +94,6 @@ try:
 except ImportError:
     AGENT_AVAILABLE = False
 
-# Import whisper model for voice transcription (optional dependency)
-try:
-    from pywhispercpp.model import Model as WhisperModel
-    whisper_model = WhisperModel('base', print_realtime=False, print_progress=False)
-    WHISPER_AVAILABLE = True
-except Exception:
-    whisper_model = None
-    WHISPER_AVAILABLE = False
-
 # Thailand timezone
 THAI_TZ = pytz.timezone('Asia/Bangkok')
 
@@ -1339,21 +1330,21 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @require_admin
 async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle voice messages - transcribe and pass to AI agent."""
-    if not WHISPER_AVAILABLE:
-        await update.message.reply_text(
-            "Voice transcription is not available.\n\n"
-            "To enable it, install pywhispercpp:\n"
-            "<code>pip install pywhispercpp</code>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
+    """Handle voice messages - transcribe via OpenAI Whisper API and pass to AI agent."""
     if not AGENT_AVAILABLE:
         await update.message.reply_text(
             "The AI agent is not available.\n\n"
             "To enable it, install the anthropic package:\n"
             "<code>pip install anthropic</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not config.OPENAI_API_KEY:
+        await update.message.reply_text(
+            "OPENAI_API_KEY is not configured.\n\n"
+            "Ask an admin to set it with:\n"
+            "<code>/config set OPENAI_API_KEY sk-...</code>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -1400,9 +1391,17 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         os.close(tmp_fd)
         await voice_file.download_to_drive(tmp_path)
 
-        # Transcribe with whisper
-        segments = whisper_model.transcribe(tmp_path)
-        prompt = " ".join(s.text for s in segments).strip()
+        # Transcribe via OpenAI Whisper API
+        with open(tmp_path, "rb") as audio_file:
+            resp = requests.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {config.OPENAI_API_KEY}"},
+                files={"file": ("voice.ogg", audio_file, "audio/ogg")},
+                data={"model": "whisper-1"},
+                timeout=30
+            )
+        resp.raise_for_status()
+        prompt = resp.json().get("text", "").strip()
     except Exception as e:
         logger.error(f"Voice transcription error: {e}")
         await status_msg.edit_text(f"Error transcribing voice message: {str(e)}")
