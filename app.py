@@ -1431,8 +1431,14 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Get existing conversation history for this user
         history = agent_conversations.get(user_id, [])
 
+        voice_prompt = (
+            prompt
+            + "\n\n[This message was transcribed from a voice note. "
+            "Keep your response brief and conversational — no lists, bullet points, or special formatting. "
+            "Write as natural spoken language that will be read aloud.]"
+        )
         response, updated_history, charts = await run_agent(
-            prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN,
+            voice_prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN,
             history=history, max_iterations=user_limits['max_iterations']
         )
 
