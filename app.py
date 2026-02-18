@@ -1469,11 +1469,15 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 if len(tts_text) > 5000:
                     tts_text = tts_text[:5000]
 
+                api_key = config.ELEVENLABS_API_KEY
+                logger.debug(f"ElevenLabs TTS: key={api_key[:4]}...{api_key[-4:]}, len={len(api_key)}, repr={repr(api_key)}")
+                logger.debug(f"ElevenLabs TTS: text length={len(tts_text)}")
+
                 voice_id = "JBFqnCBsd6RMkjVDRZzb"  # George
                 tts_resp = requests.post(
                     f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
                     headers={
-                        "xi-api-key": config.ELEVENLABS_API_KEY,
+                        "xi-api-key": api_key,
                         "Content-Type": "application/json",
                     },
                     json={
@@ -1482,6 +1486,7 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     },
                     timeout=30,
                 )
+                logger.debug(f"ElevenLabs TTS: status={tts_resp.status_code}, body={tts_resp.text[:500] if tts_resp.status_code != 200 else 'ok'}")
                 tts_resp.raise_for_status()
 
                 tts_fd, tts_path = tempfile.mkstemp(suffix=".mp3")
