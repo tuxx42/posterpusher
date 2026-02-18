@@ -3067,6 +3067,13 @@ async def startup(application):
     from dashboard import start_dashboard_server
     asyncio.create_task(start_dashboard_server())
 
+    # Notify all admins that the bot has restarted
+    for chat_id in config.admin_chat_ids:
+        try:
+            await safe_send_message(application.bot, chat_id, "Bot restarted.")
+        except Exception as e:
+            logger.error(f"Failed to notify admin {chat_id} of restart: {e}")
+
     logger.info("Startup complete")
 
 
