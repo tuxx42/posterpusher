@@ -1434,7 +1434,7 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         voice_prompt = (
             prompt
             + "\n\n[This message was transcribed from a voice note. "
-            "Keep your response brief and conversational — no lists, bullet points, or special formatting. "
+            "Keep your response brief and conversational — no lists, bullet points, special formatting, or graphs/charts. "
             "Write as natural spoken language that will be read aloud.]"
         )
         response, updated_history, charts = await run_agent(
