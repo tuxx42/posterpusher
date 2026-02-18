@@ -6,6 +6,7 @@ import asyncio
 import functools
 import sys
 import argparse
+import tempfile
 from datetime import datetime, date, timedelta
 import requests
 
@@ -22,7 +23,7 @@ CLI_MODE = '--cli' in sys.argv
 
 if not CLI_MODE:
     from telegram import Update, Bot, InputFile
-    from telegram.ext import Application, CommandHandler, ContextTypes
+    from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
     from telegram.constants import ParseMode
     from telegram.error import Conflict, TimedOut, NetworkError, RetryAfter
     from telegram.request import HTTPXRequest
@@ -39,6 +40,9 @@ else:
     InputFile = None
     Application = None
     CommandHandler = None
+    MessageHandler = None
+    class filters:
+        VOICE = None
     class ContextTypes:
         DEFAULT_TYPE = None
     class ParseMode:
@@ -89,6 +93,15 @@ try:
     AGENT_AVAILABLE = True
 except ImportError:
     AGENT_AVAILABLE = False
+
+# Import whisper model for voice transcription (optional dependency)
+try:
+    from pywhispercpp.model import Model as WhisperModel
+    whisper_model = WhisperModel('base', print_realtime=False, print_progress=False)
+    WHISPER_AVAILABLE = True
+except Exception:
+    whisper_model = None
+    WHISPER_AVAILABLE = False
 
 # Thailand timezone
 THAI_TZ = pytz.timezone('Asia/Bangkok')
@@ -1322,6 +1335,131 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.error(f"Agent error: {e}")
         await thinking_msg.edit_text(f"Error: {str(e)}")
+
+
+@require_admin
+async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle voice messages - transcribe and pass to AI agent."""
+    if not WHISPER_AVAILABLE:
+        await update.message.reply_text(
+            "Voice transcription is not available.\n\n"
+            "To enable it, install pywhispercpp:\n"
+            "<code>pip install pywhispercpp</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not AGENT_AVAILABLE:
+        await update.message.reply_text(
+            "The AI agent is not available.\n\n"
+            "To enable it, install the anthropic package:\n"
+            "<code>pip install anthropic</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not config.ANTHROPIC_API_KEY:
+        await update.message.reply_text(
+            "ANTHROPIC_API_KEY is not configured.\n\n"
+            "Ask an admin to set it with:\n"
+            "<code>/config set ANTHROPIC_API_KEY sk-...</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if not config.POSTER_ACCESS_TOKEN:
+        await update.message.reply_text(
+            "POSTER_ACCESS_TOKEN is not configured.\n\n"
+            "Ask an admin to set it with:\n"
+            "<code>/config set POSTER_ACCESS_TOKEN ...</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    user_id = str(update.effective_user.id)
+
+    # Check rate limit (shared with /agent)
+    user_limits = get_agent_limits(user_id)
+    allowed, remaining = check_agent_rate_limit(user_id)
+    if not allowed:
+        await update.message.reply_text(
+            f"Daily limit reached ({user_limits['daily_limit']} requests/day).\n"
+            "Try again tomorrow.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Send transcribing placeholder
+    status_msg = await update.message.reply_text("Transcribing voice message...")
+
+    tmp_path = None
+    try:
+        # Download voice file
+        voice_file = await update.message.voice.get_file()
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ogg")
+        os.close(tmp_fd)
+        await voice_file.download_to_drive(tmp_path)
+
+        # Transcribe with whisper
+        segments = whisper_model.transcribe(tmp_path)
+        prompt = " ".join(s.text for s in segments).strip()
+    except Exception as e:
+        logger.error(f"Voice transcription error: {e}")
+        await status_msg.edit_text(f"Error transcribing voice message: {str(e)}")
+        return
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    if not prompt:
+        await status_msg.edit_text("Could not transcribe any text from the voice message.")
+        return
+
+    # Record usage
+    record_agent_usage(user_id)
+    used, limit = get_agent_usage(user_id)
+
+    # Show transcribed text and thinking status
+    await status_msg.edit_text(
+        f"<b>Heard:</b> {prompt}\n\nThinking...",
+        parse_mode=ParseMode.HTML
+    )
+
+    try:
+        # Get existing conversation history for this user
+        history = agent_conversations.get(user_id, [])
+
+        response, updated_history, charts = await run_agent(
+            prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN,
+            history=history, max_iterations=user_limits['max_iterations']
+        )
+
+        # Store updated history
+        agent_conversations[user_id] = updated_history
+
+        # Delete status message
+        await status_msg.delete()
+
+        # Add usage footer
+        usage_footer = f"\n\n<i>({used}/{limit} today)</i>"
+
+        # Handle long responses (Telegram limit is 4096 chars)
+        if len(response) + len(usage_footer) <= 4000:
+            await update.message.reply_text(response + usage_footer, parse_mode=ParseMode.HTML)
+        else:
+            chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
+            for i, chunk in enumerate(chunks):
+                if i == len(chunks) - 1:
+                    chunk += usage_footer
+                await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+        # Send any generated charts
+        for chart in charts:
+            await update.message.reply_photo(photo=chart)
+
+    except Exception as e:
+        logger.error(f"Agent error (voice): {e}")
+        await status_msg.edit_text(f"Error: {str(e)}")
 
 
 @require_admin
@@ -3142,6 +3280,7 @@ def main():
     application.add_handler(CommandHandler("dashboard", dashboard_cmd))
     application.add_handler(CommandHandler("setpassword", setpassword_cmd))
     application.add_handler(CommandHandler("setgoal", setgoal_cmd))
+    application.add_handler(MessageHandler(filters.VOICE, voice_message))
 
     # Set up scheduler for background jobs
     scheduler = AsyncIOScheduler(timezone=THAI_TZ)
