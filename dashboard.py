@@ -775,6 +775,21 @@ async def page_summary(
     daily = _build_daily_breakdown(closed)
     hourly = _build_hourly_breakdown(closed)
 
+    # Build daily goal percentage data
+    daily_goal_pct = None
+    if config.monthly_goal > 0 and daily["labels"]:
+        daily_goal_pct = {"labels": daily["labels"], "values": []}
+        for i, date_str in enumerate(daily["labels"]):
+            day_profit = daily["profit"][i]  # in cents
+            try:
+                dt_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                dim = calendar.monthrange(dt_obj.year, dt_obj.month)[1]
+            except ValueError:
+                dim = 30
+            daily_target = config.monthly_goal / dim
+            pct = (day_profit / daily_target * 100) if daily_target > 0 else 0
+            daily_goal_pct["values"].append(round(pct, 1))
+
     shifts = await _run_sync(fetch_cash_shifts)
     cash_timeline = _build_cash_timeline(closed, finance_txns, shifts)
 
@@ -858,6 +873,7 @@ async def page_summary(
         "hourly_data": json.dumps(hourly) if hourly else "null",
         "expense_pie_data": json.dumps(expense_pie) if expense_pie else "null",
         "cash_timeline": json.dumps(cash_timeline) if cash_timeline else "null",
+        "daily_goal_pct": json.dumps(daily_goal_pct) if daily_goal_pct else "null",
         "date_from_iso": date_from_iso,
         "date_to_iso": date_to_iso,
         "prev_day": prev_day,

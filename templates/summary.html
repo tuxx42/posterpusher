@@ -94,6 +94,13 @@
     {% endif %}
 </div>
 
+{% if daily_goal_pct != "null" %}
+<div class="card chart-container">
+    <h6>Daily Goal %</h6>
+    <canvas id="goalPctChart"></canvas>
+</div>
+{% endif %}
+
 {% if all_transactions %}
 <div class="card">
     <h6>Transactions</h6>
@@ -131,6 +138,7 @@
     const hourlyData = {{ hourly_data | safe }};
     const expensePieData = {{ expense_pie_data | safe }};
     const cashTimelineData = {{ cash_timeline | safe }};
+    const dailyGoalPct = {{ daily_goal_pct | safe }};
 
     // Daily breakdown chart
     if (dailyData && dailyData.labels.length > 0) {
@@ -172,6 +180,58 @@
                 fill: true
             }
         ]);
+    }
+
+    // Daily goal percentage chart
+    if (dailyGoalPct && dailyGoalPct.labels.length > 0) {
+        const goalCtx = document.getElementById('goalPctChart');
+        if (goalCtx) {
+            const barColors = dailyGoalPct.values.map(function(v) {
+                if (v >= 100) return 'rgba(76, 175, 80, 0.7)';
+                if (v >= 75) return 'rgba(255, 152, 0, 0.7)';
+                return 'rgba(244, 67, 54, 0.7)';
+            });
+            const hoverColors = barColors.map(function(c) { return c.replace(/[\d.]+\)$/, '1)'); });
+            new Chart(goalCtx, {
+                type: 'bar',
+                data: {
+                    labels: dailyGoalPct.labels,
+                    datasets: [{
+                        label: 'Goal %',
+                        data: dailyGoalPct.values,
+                        backgroundColor: barColors,
+                        hoverBackgroundColor: hoverColors,
+                        borderRadius: 4,
+                        borderSkipped: false,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    animation: ANIMATION_OPTIONS,
+                    interaction: INTERACTION_OPTIONS,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: 'rgba(0,0,0,0.85)',
+                            padding: 12, cornerRadius: 8,
+                            callbacks: {
+                                label: function(ctx) { return ' ' + ctx.raw.toFixed(1) + '%'; }
+                            }
+                        },
+                        zoom: ZOOM_OPTIONS,
+                        annotation: undefined,
+                    },
+                    scales: {
+                        x: { ticks: { color: '#999' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: {
+                            ticks: { color: '#999', callback: function(v) { return v + '%'; } },
+                            grid: { color: 'rgba(255,255,255,0.08)' },
+                        }
+                    }
+                }
+            });
+        }
     }
 
     // Flatpickr date range picker
