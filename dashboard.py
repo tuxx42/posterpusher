@@ -303,12 +303,9 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
             raw_time = txn.get('date', '')
             cash_events.append({"raw": raw_time, "amount": amount})
 
-    if not cash_events:
-        return None
-
-    # Determine the time range of our data
-    earliest = min(ev["raw"] for ev in cash_events)
-    latest_time = max(ev["raw"] for ev in cash_events)
+    # Determine the time range of our data (if any cash events exist)
+    earliest = min(ev["raw"] for ev in cash_events) if cash_events else None
+    latest_time = max(ev["raw"] for ev in cash_events) if cash_events else None
 
     points = []
 
@@ -318,11 +315,12 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         shift_end_raw = shift.get('date_end', '')
         opening = int(shift.get('amount_start', 0) or 0)
 
-        # Skip shifts that don't overlap with our data range
-        if shift_end_raw and shift_end_raw < earliest:
-            continue
-        if shift_start_raw > latest_time:
-            continue
+        # Skip shifts that don't overlap with our data range (if we have events)
+        if earliest and latest_time:
+            if shift_end_raw and shift_end_raw < earliest:
+                continue
+            if shift_start_raw > latest_time:
+                continue
 
         # Opening point
         start_iso = _to_iso(adjust_poster_time(shift_start_raw))
