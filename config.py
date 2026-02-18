@@ -14,6 +14,7 @@ CONFIG_FILE = os.environ.get('CONFIG_FILE', 'bot_config.json')
 # API Keys (can be set via env vars or config file)
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY')
 POSTER_ACCESS_TOKEN = os.environ.get('POSTER_ACCESS_TOKEN')
 
 # Logging configuration
@@ -197,7 +198,7 @@ def mask_api_key(key: str) -> str:
 def load_config():
     """Load persisted state from config file."""
     global notified_transaction_ids, notified_transaction_date, last_seen_void_id, last_cash_balance
-    global ANTHROPIC_API_KEY, OPENAI_API_KEY, POSTER_ACCESS_TOKEN, LOG_LEVEL, monthly_goal
+    global ANTHROPIC_API_KEY, OPENAI_API_KEY, ELEVENLABS_API_KEY, POSTER_ACCESS_TOKEN, LOG_LEVEL, monthly_goal
 
     try:
         if os.path.exists(CONFIG_FILE):
@@ -243,6 +244,8 @@ def load_config():
                     ANTHROPIC_API_KEY = cfg.get('ANTHROPIC_API_KEY')
                 if cfg.get('OPENAI_API_KEY'):
                     OPENAI_API_KEY = cfg.get('OPENAI_API_KEY')
+                if cfg.get('ELEVENLABS_API_KEY'):
+                    ELEVENLABS_API_KEY = cfg.get('ELEVENLABS_API_KEY')
                 if cfg.get('POSTER_ACCESS_TOKEN'):
                     POSTER_ACCESS_TOKEN = cfg.get('POSTER_ACCESS_TOKEN')
 
@@ -288,6 +291,8 @@ def save_config():
             config['ANTHROPIC_API_KEY'] = existing_config['ANTHROPIC_API_KEY']
         if existing_config.get('OPENAI_API_KEY'):
             config['OPENAI_API_KEY'] = existing_config['OPENAI_API_KEY']
+        if existing_config.get('ELEVENLABS_API_KEY'):
+            config['ELEVENLABS_API_KEY'] = existing_config['ELEVENLABS_API_KEY']
         if existing_config.get('POSTER_ACCESS_TOKEN'):
             config['POSTER_ACCESS_TOKEN'] = existing_config['POSTER_ACCESS_TOKEN']
         if existing_config.get('LOG_LEVEL'):
@@ -301,9 +306,9 @@ def save_config():
 
 def set_api_key(var_name: str, value: str) -> bool:
     """Set an API key in config file and memory."""
-    global ANTHROPIC_API_KEY, OPENAI_API_KEY, POSTER_ACCESS_TOKEN
+    global ANTHROPIC_API_KEY, OPENAI_API_KEY, ELEVENLABS_API_KEY, POSTER_ACCESS_TOKEN
 
-    allowed_vars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "POSTER_ACCESS_TOKEN"]
+    allowed_vars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY", "POSTER_ACCESS_TOKEN"]
     if var_name not in allowed_vars:
         return False
 
@@ -326,6 +331,8 @@ def set_api_key(var_name: str, value: str) -> bool:
         ANTHROPIC_API_KEY = value
     elif var_name == "OPENAI_API_KEY":
         OPENAI_API_KEY = value
+    elif var_name == "ELEVENLABS_API_KEY":
+        ELEVENLABS_API_KEY = value
     elif var_name == "POSTER_ACCESS_TOKEN":
         POSTER_ACCESS_TOKEN = value
 
@@ -335,9 +342,9 @@ def set_api_key(var_name: str, value: str) -> bool:
 
 def delete_api_key(var_name: str) -> bool:
     """Delete an API key from config file and memory."""
-    global ANTHROPIC_API_KEY, OPENAI_API_KEY, POSTER_ACCESS_TOKEN
+    global ANTHROPIC_API_KEY, OPENAI_API_KEY, ELEVENLABS_API_KEY, POSTER_ACCESS_TOKEN
 
-    allowed_vars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "POSTER_ACCESS_TOKEN"]
+    allowed_vars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY", "POSTER_ACCESS_TOKEN"]
     if var_name not in allowed_vars:
         return False
 
@@ -361,6 +368,8 @@ def delete_api_key(var_name: str) -> bool:
             ANTHROPIC_API_KEY = None
         elif var_name == "OPENAI_API_KEY":
             OPENAI_API_KEY = None
+        elif var_name == "ELEVENLABS_API_KEY":
+            ELEVENLABS_API_KEY = None
         elif var_name == "POSTER_ACCESS_TOKEN":
             POSTER_ACCESS_TOKEN = None
 

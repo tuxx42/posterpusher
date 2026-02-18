@@ -8,6 +8,7 @@ import sys
 import argparse
 import tempfile
 from datetime import datetime, date, timedelta
+import re
 import requests
 
 # Import chart functions
@@ -1455,6 +1456,44 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Send any generated charts
         for chart in charts:
             await update.message.reply_photo(photo=chart)
+
+        # Send TTS voice reply if ElevenLabs is configured
+        if config.ELEVENLABS_API_KEY:
+            tts_path = None
+            try:
+                # Strip HTML tags for clean TTS input
+                tts_text = re.sub(r'<[^>]+>', '', response)
+                # Truncate to ElevenLabs limit
+                if len(tts_text) > 5000:
+                    tts_text = tts_text[:5000]
+
+                voice_id = "JBFqnCBsd6RMkjVDRZzb"  # George
+                tts_resp = requests.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                    headers={
+                        "xi-api-key": config.ELEVENLABS_API_KEY,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "text": tts_text,
+                        "model_id": "eleven_multilingual_v2",
+                    },
+                    timeout=30,
+                )
+                tts_resp.raise_for_status()
+
+                tts_fd, tts_path = tempfile.mkstemp(suffix=".mp3")
+                os.close(tts_fd)
+                with open(tts_path, "wb") as f:
+                    f.write(tts_resp.content)
+
+                with open(tts_path, "rb") as f:
+                    await update.message.reply_voice(voice=f)
+            except Exception as e:
+                logger.error(f"ElevenLabs TTS error: {e}")
+            finally:
+                if tts_path and os.path.exists(tts_path):
+                    os.remove(tts_path)
 
     except Exception as e:
         logger.error(f"Agent error (voice): {e}")
