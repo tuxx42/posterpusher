@@ -1459,34 +1459,27 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         for chart in charts:
             await update.message.reply_photo(photo=chart)
 
-        # Send TTS voice reply if ElevenLabs is configured
-        if config.ELEVENLABS_API_KEY:
+        # Send TTS voice reply via OpenAI TTS
+        if config.OPENAI_API_KEY:
             tts_path = None
             try:
-                # Strip HTML tags for clean TTS input
                 tts_text = re.sub(r'<[^>]+>', '', response)
-                # Truncate to ElevenLabs limit
-                if len(tts_text) > 5000:
-                    tts_text = tts_text[:5000]
+                if len(tts_text) > 4096:
+                    tts_text = tts_text[:4096]
 
-                api_key = config.ELEVENLABS_API_KEY
-                logger.debug(f"ElevenLabs TTS: key={api_key[:4]}...{api_key[-4:]}, len={len(api_key)}, repr={repr(api_key)}")
-                logger.debug(f"ElevenLabs TTS: text length={len(tts_text)}")
-
-                voice_id = "JBFqnCBsd6RMkjVDRZzb"  # George
                 tts_resp = requests.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                    "https://api.openai.com/v1/audio/speech",
                     headers={
-                        "xi-api-key": api_key,
+                        "Authorization": f"Bearer {config.OPENAI_API_KEY}",
                         "Content-Type": "application/json",
                     },
                     json={
-                        "text": tts_text,
-                        "model_id": "eleven_multilingual_v2",
+                        "model": "tts-1",
+                        "input": tts_text,
+                        "voice": "onyx",
                     },
                     timeout=30,
                 )
-                logger.debug(f"ElevenLabs TTS: status={tts_resp.status_code}, body={tts_resp.text[:500] if tts_resp.status_code != 200 else 'ok'}")
                 tts_resp.raise_for_status()
 
                 tts_fd, tts_path = tempfile.mkstemp(suffix=".mp3")
@@ -1497,7 +1490,7 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 with open(tts_path, "rb") as f:
                     await update.message.reply_voice(voice=f)
             except Exception as e:
-                logger.error(f"ElevenLabs TTS error: {e}")
+                logger.error(f"OpenAI TTS error: {e}")
             finally:
                 if tts_path and os.path.exists(tts_path):
                     os.remove(tts_path)
