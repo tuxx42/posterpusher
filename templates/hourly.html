@@ -22,6 +22,12 @@
     </form>
 </div>
 
+<!-- All-days average chart -->
+<div class="card chart-container" style="margin-bottom:1.5rem">
+    <h6>All Days Average <span id="avg-subtitle" style="opacity:0.5;font-size:0.8rem;font-weight:normal"></span></h6>
+    <canvas id="chart-average"></canvas>
+</div>
+
 <!-- Charts grid: one chart per day of week -->
 <div class="charts-grid">
     {% for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] %}
@@ -36,7 +42,24 @@
 {% block extra_scripts %}
 <script>
     const weekdayData = {{ weekday_data | safe }};
+    const avgData = {{ avg_data | safe }};
     const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+    // Render all-days average chart
+    (function() {
+        document.getElementById('avg-subtitle').textContent = '(averaged over ' + avgData.num_days + ' days)';
+        const start = avgData.sales.findIndex(v => v > 0);
+        const end = avgData.sales.length - 1 - [...avgData.sales].reverse().findIndex(v => v > 0);
+        if (start >= 0) {
+            const labels = avgData.labels.slice(start, end + 1);
+            const sales = avgData.sales.slice(start, end + 1);
+            const profit = avgData.profit.slice(start, end + 1);
+            renderBarChart('chart-average', labels, [
+                { label: 'Avg Sales', data: sales.map(v => v / 100), backgroundColor: 'rgba(33, 150, 243, 0.7)' },
+                { label: 'Avg Profit', data: profit.map(v => v / 100), backgroundColor: 'rgba(76, 175, 80, 0.7)' }
+            ]);
+        }
+    })();
 
     days.forEach(function(day) {
         const d = weekdayData[day];

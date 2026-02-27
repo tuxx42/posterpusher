@@ -411,6 +411,36 @@ def _build_hourly_breakdown(transactions):
     }
 
 
+def _build_hourly_average(transactions):
+    """Average sales/profit per hour across all unique days."""
+    from app import adjust_poster_time
+
+    hourly = {h: {"sales": 0, "profit": 0, "count": 0} for h in range(24)}
+    unique_days = set()
+    for txn in transactions:
+        close_date = adjust_poster_time(txn.get('date_close_date', '') or txn.get('date', ''))
+        if ' ' in close_date:
+            try:
+                dt = datetime.strptime(close_date, "%Y-%m-%d %H:%M:%S")
+                unique_days.add(dt.date())
+                hour = dt.hour
+                hourly[hour]["sales"] += int(txn.get('sum', 0) or 0)
+                hourly[hour]["profit"] += int(txn.get('total_profit', 0) or 0)
+                hourly[hour]["count"] += 1
+            except (ValueError, IndexError):
+                pass
+
+    num_days = max(len(unique_days), 1)
+    labels = [f"{h:02d}:00" for h in range(24)]
+    return {
+        "labels": labels,
+        "sales": [round(hourly[h]["sales"] / num_days) for h in range(24)],
+        "profit": [round(hourly[h]["profit"] / num_days) for h in range(24)],
+        "count": [round(hourly[h]["count"] / num_days, 1) for h in range(24)],
+        "num_days": num_days,
+    }
+
+
 # ============================================================
 # API Endpoints (JSON)
 # ============================================================
@@ -928,6 +958,7 @@ async def page_hourly(
     transactions = await _run_sync(fetch_transactions, date_from_api, date_to_api)
     closed = _filter_closed_sales(transactions)
     weekday_data = _build_hourly_by_weekday(closed)
+    avg_data = _build_hourly_average(closed)
 
     return templates.TemplateResponse("hourly.html", {
         "request": request,
@@ -935,6 +966,7 @@ async def page_hourly(
         "period": period,
         "display": display,
         "weekday_data": json.dumps(weekday_data),
+        "avg_data": json.dumps(avg_data),
         "date_from_iso": date_from_iso,
         "date_to_iso": date_to_iso,
         "format_currency": format_currency,
