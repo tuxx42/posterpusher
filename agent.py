@@ -385,11 +385,13 @@ def _compress_history_results(messages: list) -> list:
                     block = dict(block)
                     block["content"] = _compress_tool_result(block.get("content", ""))
                 elif isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "render_ui":
-                    # Strip the large HTML from render_ui calls in history
+                    # Truncate render_ui HTML in history but keep enough for modifications
                     block = dict(block)
                     inp = dict(block.get("input", {}))
                     html = inp.get("html", "")
-                    inp["html"] = f"(rendered HTML, {len(html)} chars)"
+                    max_html_history = 3000
+                    if len(html) > max_html_history:
+                        inp["html"] = html[:max_html_history] + f"\n<!-- ... truncated ({len(html)} chars total) -->"
                     block["input"] = inp
                 new_content.append(block)
             compressed.append({**msg, "content": new_content})
