@@ -739,6 +739,10 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
             messages=messages
         )
 
+        import logging
+        _agent_logger = logging.getLogger(__name__)
+        _agent_logger.info(f"Agent iteration {iteration}: stop_reason={response.stop_reason}, content_types={[b.type for b in response.content]}")
+
         # Check if we need to handle tool calls
         if response.stop_reason == "tool_use":
             # Process all tool calls
