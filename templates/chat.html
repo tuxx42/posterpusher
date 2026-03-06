@@ -126,6 +126,7 @@
     }
     .render-pane.visible {
         display: flex;
+        min-height: 300px;
     }
     .render-header {
         display: flex;
@@ -216,6 +217,7 @@
     }
 
     function showRenderPanel(html, title) {
+        console.log('showRenderPanel called, title:', title, 'html length:', html ? html.length : 0);
         renderTitle.textContent = title || 'Render Panel';
         renderFrame.srcdoc = html;
         renderPane.classList.add('visible');
@@ -303,6 +305,7 @@
                     usageEl.textContent = data.usage.used + '/' + data.usage.limit + ' today';
                 }
                 // Show the last render panel if any
+                console.log('render_panels:', data.render_panels);
                 if (data.render_panels && data.render_panels.length > 0) {
                     const panel = data.render_panels[data.render_panels.length - 1];
                     showRenderPanel(panel.html, panel.title);
