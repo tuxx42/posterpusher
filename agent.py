@@ -29,6 +29,29 @@ FORMATTING_MARKDOWN = """IMPORTANT - Use Markdown formatting:
 - Use ```language blocks for code/data tables
 - Do NOT use HTML tags"""
 
+RENDER_UI_INSTRUCTIONS = """
+You have a render panel below the chat in the dashboard. Use the render_ui tool to display rich interactive content there.
+The panel is a sandboxed iframe — you can use full HTML, CSS, and JavaScript freely.
+
+You can render anything:
+- Interactive charts (use Chart.js via https://cdn.jsdelivr.net/npm/chart.js)
+- Data tables with sorting/filtering
+- Buttons, forms, and interactive controls
+- Summary cards, KPI dashboards
+- Any HTML/CSS/JS you want
+
+Guidelines:
+- Always produce a COMPLETE standalone HTML document (with <html>, <head>, <body>)
+- Include any CSS inline in a <style> tag
+- Include any JS inline in a <script> tag
+- For charts, use Chart.js loaded from CDN
+- Use a clean, modern style. Use system fonts: font-family: system-ui, -apple-system, sans-serif
+- Use a dark theme to match the dashboard: dark background (#1a1a2e or #16213e), light text (#e0e0e0), accent colors (#2196F3, #4CAF50, #FF9800, #F44336)
+- The panel is roughly the bottom half of the viewport, so design for a wide, short layout
+- Always use the render_ui tool alongside your text response — the text goes in the chat, the visual goes in the panel
+- For simple text-only answers, you do NOT need to use render_ui
+"""
+
 POSTER_API_REFERENCE = """
 ## POSTER POS API REFERENCE
 
@@ -241,7 +264,7 @@ TOOLS = [
     },
     {
         "name": "plot_graph",
-        "description": "Generate a chart/graph visualization. Use this after fetching data to visualize it. Always provide a text summary alongside the chart.",
+        "description": "Generate a chart/graph visualization as a PNG image. Use this for Telegram responses or when a simple static chart is sufficient. Always provide a text summary alongside the chart.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -285,6 +308,24 @@ TOOLS = [
                 }
             },
             "required": ["chart_type", "labels"]
+        }
+    },
+    {
+        "name": "render_ui",
+        "description": "Render rich interactive HTML content in the dashboard render panel. Use this for interactive charts (Chart.js), data tables, KPI cards, buttons, forms, or any visual/interactive content. Only available when responding via the web dashboard (not Telegram).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "html": {
+                    "type": "string",
+                    "description": "Complete standalone HTML document to render in the panel. Include all CSS in <style> tags and JS in <script> tags. Use Chart.js from CDN for charts. Use dark theme colors to match the dashboard."
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Short title shown above the render panel (e.g. 'Sales Overview', 'Top Products')"
+                }
+            },
+            "required": ["html"]
         }
     }
 ]
@@ -535,6 +576,7 @@ def _compress_tool_result(result: str) -> str:
 ALLOWED_TOOLS = {
     "poster_api",
     "plot_graph",
+    "render_ui",
 }
 
 
@@ -553,6 +595,14 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | t
         return json.dumps({"error": f"Tool not allowed: {tool_name}"})
 
     try:
+        # Handle render_ui tool — pass through HTML content
+        if tool_name == "render_ui":
+            html = tool_input.get("html", "")
+            title = tool_input.get("title", "")
+            if not html:
+                return json.dumps({"error": "Missing required 'html' parameter"})
+            return ("render_ui", {"html": html, "title": title})
+
         # Handle plot_graph tool separately
         if tool_name == "plot_graph":
             chart_type = tool_input.get("chart_type", "bar")
@@ -626,7 +676,7 @@ def execute_tool(tool_name: str, tool_input: dict, poster_token: str) -> str | t
         return json.dumps({"error": f"Tool execution failed: {str(e)}"})
 
 
-async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, model: str = "claude-sonnet-4-20250514", history: list = None, max_iterations: int = 5, source: str = "telegram") -> tuple[str, list, list]:
+async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, model: str = "claude-sonnet-4-20250514", history: list = None, max_iterations: int = 5, source: str = "telegram") -> tuple[str, list, list, list]:
     """Run the Anthropic agent with tool calling.
 
     Args:
@@ -638,8 +688,9 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
         max_iterations: Maximum tool use iterations (default 5)
 
     Returns:
-        Tuple of (response_text, trimmed_history, charts)
+        Tuple of (response_text, trimmed_history, charts, render_panels)
         where charts is a list of BytesIO buffers containing generated chart images
+        and render_panels is a list of {html, title} dicts for dashboard rendering
     """
     import anthropic
 
@@ -658,6 +709,13 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
         formatting_instructions=formatting
     )
 
+    # Add render_ui instructions and tool for dashboard only
+    if source == "dashboard":
+        system_prompt += "\n" + RENDER_UI_INSTRUCTIONS
+        tools = TOOLS  # includes render_ui
+    else:
+        tools = [t for t in TOOLS if t["name"] != "render_ui"]
+
     # Start with history (if provided) + new user message
     # Validate incoming history to remove any orphaned tool_use/tool_result pairs
     messages = _clean_orphaned_messages(list(history)) if history else []
@@ -665,6 +723,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
 
     iteration = 0
     charts = []  # Track generated chart images
+    render_panels = []  # Track render_ui content for dashboard
 
     while iteration < max_iterations:
         iteration += 1
@@ -673,7 +732,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
             model=model,
             max_tokens=2048,  # Reduced to limit costs
             system=system_prompt,
-            tools=TOOLS,
+            tools=tools,
             messages=messages
         )
 
@@ -691,15 +750,25 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
                         poster_token
                     )
 
-                    # Handle chart generation (returns tuple)
+                    # Handle tuple results (chart or render_ui)
                     if isinstance(tool_result, tuple):
-                        result_text, chart_buf = tool_result
-                        charts.append(chart_buf)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text
-                        })
+                        result_text, payload = tool_result
+                        if result_text == "render_ui":
+                            # render_ui returns ("render_ui", {html, title})
+                            render_panels.append(payload)
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": "Content rendered in the dashboard panel."
+                            })
+                        else:
+                            # plot_graph returns (text, BytesIO)
+                            charts.append(payload)
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result_text
+                            })
                     else:
                         tool_results.append({
                             "type": "tool_result",
@@ -722,7 +791,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
             messages.append({"role": "assistant", "content": final_text})
 
             response_text = final_text if final_text else "No response generated."
-            return response_text, _trim_history(messages), charts
+            return response_text, _trim_history(messages), charts, render_panels
 
     # Reached max iterations - ask the model to summarize what it found
     messages.append({
@@ -745,8 +814,8 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
 
         if summary_text:
             messages.append({"role": "assistant", "content": summary_text})
-            return summary_text, _trim_history(messages), charts
+            return summary_text, _trim_history(messages), charts, render_panels
     except Exception:
         pass
 
-    return "Agent reached maximum iterations without completing.", _trim_history(messages), charts
+    return "Agent reached maximum iterations without completing.", _trim_history(messages), charts, render_panels

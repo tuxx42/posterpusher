@@ -1987,7 +1987,7 @@ async def api_chat(body: ChatRequest, session: dict = Depends(require_auth)):
     history = config.agent_conversations.get(user_id, [])
 
     try:
-        response_text, updated_history, charts = await run_agent(
+        response_text, updated_history, charts, render_panels = await run_agent(
             message,
             config.ANTHROPIC_API_KEY,
             config.POSTER_ACCESS_TOKEN,
@@ -2008,6 +2008,7 @@ async def api_chat(body: ChatRequest, session: dict = Depends(require_auth)):
         return {
             "response": response_text,
             "charts": chart_images,
+            "render_panels": render_panels,
             "usage": {"used": used, "limit": limit},
         }
 

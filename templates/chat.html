@@ -4,11 +4,19 @@
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
-    .chat-container {
+    .chat-layout {
         display: flex;
         flex-direction: column;
         height: calc(100vh - 140px);
     }
+    .chat-pane {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        transition: flex 0.3s ease;
+    }
+    .chat-pane.full { flex: 1; }
+    .chat-pane.half { flex: 1; }
     .chat-messages {
         flex: 1;
         overflow-y: auto;
@@ -107,28 +115,81 @@
         0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
         30% { opacity: 1; transform: translateY(-4px); }
     }
+
+    /* Render panel */
+    .render-pane {
+        display: none;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        border-top: 2px solid var(--pico-muted-border-color);
+    }
+    .render-pane.visible {
+        display: flex;
+    }
+    .render-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.4rem 0.5rem;
+        font-size: 0.8rem;
+        opacity: 0.8;
+    }
+    .render-header-title {
+        font-weight: 600;
+    }
+    .render-header button {
+        width: auto;
+        padding: 0.1rem 0.5rem;
+        margin: 0;
+        font-size: 0.75rem;
+        background: transparent;
+        border: 1px solid var(--pico-muted-border-color);
+        color: var(--pico-muted-color);
+        cursor: pointer;
+    }
+    .render-frame {
+        flex: 1;
+        width: 100%;
+        border: none;
+        border-radius: var(--pico-border-radius);
+        background: #1a1a2e;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="chat-container">
-    <div class="chat-meta">
-        <span>AI Assistant</span>
-        <span>
-            <span id="usage-display">{{ usage_used }}/{{ usage_limit }} today</span>
-            &nbsp;
-            <a href="#" id="clear-btn" style="font-size:0.8rem;">Clear history</a>
-        </span>
+<div class="chat-layout">
+    <div class="chat-pane full" id="chat-pane">
+        <div class="chat-meta">
+            <span>AI Assistant</span>
+            <span>
+                <span id="usage-display">{{ usage_used }}/{{ usage_limit }} today</span>
+                &nbsp;
+                <a href="#" id="clear-btn" style="font-size:0.8rem;">Clear history</a>
+            </span>
+        </div>
+
+        <div class="chat-messages" id="chat-messages"></div>
+
+        <div class="chat-input-area">
+            <textarea id="chat-input"
+                      placeholder="Ask about sales, inventory, expenses..."
+                      rows="1"
+                      autocomplete="off"></textarea>
+            <button id="send-btn">Send</button>
+        </div>
     </div>
 
-    <div class="chat-messages" id="chat-messages"></div>
-
-    <div class="chat-input-area">
-        <textarea id="chat-input"
-                  placeholder="Ask about sales, inventory, expenses..."
-                  rows="1"
-                  autocomplete="off"></textarea>
-        <button id="send-btn">Send</button>
+    <div class="render-pane" id="render-pane">
+        <div class="render-header">
+            <span class="render-header-title" id="render-title">Render Panel</span>
+            <button id="render-close-btn">Close</button>
+        </div>
+        <iframe id="render-frame"
+                class="render-frame"
+                sandbox="allow-scripts"
+                referrerpolicy="no-referrer"></iframe>
     </div>
 </div>
 {% endblock %}
@@ -142,12 +203,35 @@
     const sendBtn = document.getElementById('send-btn');
     const clearBtn = document.getElementById('clear-btn');
     const usageEl = document.getElementById('usage-display');
+    const chatPane = document.getElementById('chat-pane');
+    const renderPane = document.getElementById('render-pane');
+    const renderFrame = document.getElementById('render-frame');
+    const renderTitle = document.getElementById('render-title');
+    const renderCloseBtn = document.getElementById('render-close-btn');
 
     let isWaiting = false;
 
     function scrollToBottom() {
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
+
+    function showRenderPanel(html, title) {
+        renderTitle.textContent = title || 'Render Panel';
+        renderFrame.srcdoc = html;
+        renderPane.classList.add('visible');
+        chatPane.classList.remove('full');
+        chatPane.classList.add('half');
+        scrollToBottom();
+    }
+
+    function hideRenderPanel() {
+        renderPane.classList.remove('visible');
+        chatPane.classList.remove('half');
+        chatPane.classList.add('full');
+        renderFrame.srcdoc = '';
+    }
+
+    renderCloseBtn.addEventListener('click', hideRenderPanel);
 
     function addMessage(role, content, charts) {
         const div = document.createElement('div');
@@ -218,6 +302,11 @@
                 if (data.usage) {
                     usageEl.textContent = data.usage.used + '/' + data.usage.limit + ' today';
                 }
+                // Show the last render panel if any
+                if (data.render_panels && data.render_panels.length > 0) {
+                    const panel = data.render_panels[data.render_panels.length - 1];
+                    showRenderPanel(panel.html, panel.title);
+                }
             }
         } catch (e) {
             hideTyping();
@@ -249,6 +338,7 @@
         try {
             await fetch('/api/chat/clear', { method: 'POST' });
             messagesEl.innerHTML = '';
+            hideRenderPanel();
         } catch (err) {
             alert('Failed to clear history.');
         }

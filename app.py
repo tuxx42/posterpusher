@@ -1297,7 +1297,7 @@ async def agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Get existing conversation history for this user
         history = agent_conversations.get(user_id, [])
 
-        response, updated_history, charts = await run_agent(
+        response, updated_history, charts, _panels = await run_agent(
             prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN,
             history=history, max_iterations=user_limits['max_iterations']
         )
@@ -1437,7 +1437,7 @@ async def voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "Keep your response brief and conversational — no lists, bullet points, special formatting, or graphs/charts. "
             "Write as natural spoken language that will be read aloud.]"
         )
-        response, updated_history, charts = await run_agent(
+        response, updated_history, charts, _panels = await run_agent(
             voice_prompt, config.ANTHROPIC_API_KEY, config.POSTER_ACCESS_TOKEN,
             history=history, max_iterations=user_limits['max_iterations']
         )
