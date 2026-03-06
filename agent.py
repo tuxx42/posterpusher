@@ -733,7 +733,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
 
         response = client.messages.create(
             model=model,
-            max_tokens=4096 if source == "dashboard" else 2048,
+            max_tokens=8192 if source == "dashboard" else 2048,
             system=system_prompt,
             tools=tools,
             messages=messages
