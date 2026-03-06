@@ -374,7 +374,7 @@ def _clean_orphaned_messages(messages: list) -> list:
 
 
 def _compress_history_results(messages: list) -> list:
-    """Compress tool results in message history to reduce token usage."""
+    """Compress tool results and render_ui inputs in message history to reduce token usage."""
     compressed = []
     for msg in messages:
         content = msg.get("content", [])
@@ -384,6 +384,13 @@ def _compress_history_results(messages: list) -> list:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     block = dict(block)
                     block["content"] = _compress_tool_result(block.get("content", ""))
+                elif isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "render_ui":
+                    # Strip the large HTML from render_ui calls in history
+                    block = dict(block)
+                    inp = dict(block.get("input", {}))
+                    html = inp.get("html", "")
+                    inp["html"] = f"(rendered HTML, {len(html)} chars)"
+                    block["input"] = inp
                 new_content.append(block)
             compressed.append({**msg, "content": new_content})
         else:
