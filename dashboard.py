@@ -2005,6 +2005,11 @@ async def api_chat(body: ChatRequest, session: dict = Depends(require_auth)):
             b64 = base64.b64encode(chart_buf.read()).decode('utf-8')
             chart_images.append(f"data:image/png;base64,{b64}")
 
+        logger.info(f"Agent response: {len(chart_images)} charts, {len(render_panels)} render_panels")
+        if render_panels:
+            logger.info(f"Render panel titles: {[p.get('title', '') for p in render_panels]}")
+            logger.info(f"Render panel HTML lengths: {[len(p.get('html', '')) for p in render_panels]}")
+
         return {
             "response": response_text,
             "charts": chart_images,

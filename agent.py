@@ -30,7 +30,9 @@ FORMATTING_MARKDOWN = """IMPORTANT - Use Markdown formatting:
 - Do NOT use HTML tags"""
 
 RENDER_UI_INSTRUCTIONS = """
-You have a render panel below the chat in the dashboard. Use the render_ui tool to display rich interactive content there.
+IMPORTANT: You are responding in the web dashboard, which has a render panel below the chat.
+Use the render_ui tool (NOT plot_graph) to display visual content. The render_ui tool is PREFERRED over plot_graph in the dashboard because it produces interactive, richer output.
+
 The panel is a sandboxed iframe — you can use full HTML, CSS, and JavaScript freely.
 
 You can render anything:
@@ -221,12 +223,13 @@ Guidelines:
 
 {formatting_instructions}
 
-When presenting numerical data, ALWAYS use the plot_graph tool to create visualizations:
+When presenting numerical data, create visualizations:
 - Use pie charts for showing proportions or market share
 - Use bar charts for comparing categories or showing rankings
 - Use line charts for showing trends over time
 - Use horizontal bar charts for ranked lists with long labels
 Always provide a text summary alongside any chart.
+If the render_ui tool is available, PREFER it over plot_graph for richer, interactive visualizations.
 
 IMPORTANT - Optimize data requests to avoid running out of context:
 - ALWAYS use the 'fields' parameter to request only the fields you need for your analysis
@@ -730,7 +733,7 @@ async def run_agent(prompt: str, anthropic_api_key: str, poster_token: str, mode
 
         response = client.messages.create(
             model=model,
-            max_tokens=2048,  # Reduced to limit costs
+            max_tokens=4096 if source == "dashboard" else 2048,
             system=system_prompt,
             tools=tools,
             messages=messages
