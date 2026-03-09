@@ -2471,8 +2471,8 @@ def create_finance_transaction(amount_cents, comment, category_id=None, account_
         dict with response data or None on error
     """
     url = f"{POSTER_API_URL}/finance.createTransaction"
+    params = {"token": config.POSTER_ACCESS_TOKEN}
     payload = {
-        "token": config.POSTER_ACCESS_TOKEN,
         "type": 0,  # 0 = expense
         "amount": -abs(amount_cents),  # negative for expense
         "comment": comment,
@@ -2485,7 +2485,7 @@ def create_finance_transaction(amount_cents, comment, category_id=None, account_
         payload["date"] = date_str
 
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, params=params, json=payload, timeout=10)
         response.raise_for_status()
         data = response.json()
         if "error" in data:
