@@ -2457,6 +2457,99 @@ async def expenses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message.strip(), parse_mode=ParseMode.HTML)
 
 
+def create_finance_transaction(amount_cents, comment, category_id=None, account_id=None, date_str=None):
+    """Create a finance transaction (expense) in Poster API.
+
+    Args:
+        amount_cents: Amount in cents (positive value, will be sent as negative for expense)
+        comment: Description/reason for the expense
+        category_id: Optional finance category ID
+        account_id: Optional finance account ID
+        date_str: Optional date in Ymd format (defaults to today)
+
+    Returns:
+        dict with response data or None on error
+    """
+    url = f"{POSTER_API_URL}/finance.createTransaction"
+    payload = {
+        "token": config.POSTER_ACCESS_TOKEN,
+        "type": 0,  # 0 = expense
+        "amount": -abs(amount_cents),  # negative for expense
+        "comment": comment,
+    }
+    if category_id:
+        payload["category_id"] = category_id
+    if account_id:
+        payload["account_id"] = account_id
+    if date_str:
+        payload["date"] = date_str
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if "error" in data:
+            logger.error(f"Poster API error creating transaction: {data['error']}")
+            return None
+        return data.get("response", data)
+    except requests.RequestException as e:
+        logger.error(f"Failed to create finance transaction: {e}")
+        return None
+
+
+async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /add_expense command - add an expense to Poster.
+
+    Usage: /add_expense <price> <reason>
+    Example: /add_expense 150 Office supplies and cleaning
+    """
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Usage: /add_expense &lt;price&gt; &lt;reason&gt;\n\n"
+            "Examples:\n"
+            "/add_expense 150 Office supplies\n"
+            "/add_expense 49.50 Taxi to market\n"
+            "/add_expense 2500 Monthly rent payment",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Parse price
+    price_str = context.args[0]
+    try:
+        price = float(price_str)
+        if price <= 0:
+            raise ValueError("Price must be positive")
+    except ValueError:
+        await update.message.reply_text(
+            f"❌ Invalid price: <code>{price_str}</code>\n"
+            "Please enter a positive number (e.g. 150 or 49.50)",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Rest of args is the reason
+    reason = " ".join(context.args[1:])
+    amount_cents = int(round(price * 100))
+
+    await update.message.reply_text(f"⏳ Adding expense: ฿{price:,.2f} — {reason}...")
+
+    result = create_finance_transaction(amount_cents, reason)
+
+    if result is not None:
+        await update.message.reply_text(
+            f"✅ <b>Expense added</b>\n\n"
+            f"<b>Amount:</b> ฿{price:,.2f}\n"
+            f"<b>Reason:</b> {reason}",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text(
+            "❌ Failed to add expense. Check logs for details.",
+            parse_mode=ParseMode.HTML
+        )
+
+
 def fetch_removed_transactions(date_from, date_to=None):
     """Fetch removed/voided transactions from Poster API."""
     url = f"{POSTER_API_URL}/dash.getTransactions"
@@ -3323,6 +3416,7 @@ def main():
     application.add_handler(CommandHandler("summary", summary))
     application.add_handler(CommandHandler("cash", cash))
     application.add_handler(CommandHandler("expenses", expenses))
+    application.add_handler(CommandHandler("add_expense", add_expense))
     application.add_handler(CommandHandler("subscribe", subscribe))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
     application.add_handler(CommandHandler("alerts", alerts_on))
