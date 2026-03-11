@@ -307,24 +307,32 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
     earliest = min(ev["raw"] for ev in cash_events) if cash_events else None
     latest_time = max(ev["raw"] for ev in cash_events) if cash_events else None
 
-    points = []
+    register_points = []
+    safe_drop_points = []
+    total_points = []
+
+    cumulative_safe_drop = 0
 
     # Process shifts in chronological order (API returns newest first)
     for shift in reversed(shifts):
         shift_start_raw = shift.get('date_start', '')
         shift_end_raw = shift.get('date_end', '')
         opening = int(shift.get('amount_start', 0) or 0)
+        collection = int(shift.get('amount_collection', 0) or 0)
 
         # Skip shifts that don't overlap with our data range (if we have events)
         if earliest and latest_time:
             if shift_end_raw and shift_end_raw < earliest:
+                cumulative_safe_drop += collection
                 continue
             if shift_start_raw > latest_time:
                 continue
 
         # Opening point
         start_iso = _to_iso(adjust_poster_time(shift_start_raw))
-        points.append({"x": start_iso, "y": opening})
+        register_points.append({"x": start_iso, "y": opening})
+        safe_drop_points.append({"x": start_iso, "y": cumulative_safe_drop})
+        total_points.append({"x": start_iso, "y": opening + cumulative_safe_drop})
 
         # Find events within this shift's time window
         shift_events = []
@@ -338,19 +346,30 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         for ev in shift_events:
             balance += ev["amount"]
             ev_iso = _to_iso(adjust_poster_time(ev["raw"]))
-            points.append({"x": ev_iso, "y": balance})
+            register_points.append({"x": ev_iso, "y": balance})
+            safe_drop_points.append({"x": ev_iso, "y": cumulative_safe_drop})
+            total_points.append({"x": ev_iso, "y": balance + cumulative_safe_drop})
 
         # Closing point from Poster (if shift is closed)
         if shift_end_raw:
             closing = int(shift.get('amount_end', 0) or 0)
+            cumulative_safe_drop += collection
             end_iso = _to_iso(adjust_poster_time(shift_end_raw))
-            points.append({"x": end_iso, "y": closing})
+            register_points.append({"x": end_iso, "y": closing})
+            safe_drop_points.append({"x": end_iso, "y": cumulative_safe_drop})
+            total_points.append({"x": end_iso, "y": closing + cumulative_safe_drop})
 
-    if len(points) <= 1:
+    if len(register_points) <= 1:
         return None
 
-    points.sort(key=lambda p: p["x"])
-    return {"points": points}
+    register_points.sort(key=lambda p: p["x"])
+    safe_drop_points.sort(key=lambda p: p["x"])
+    total_points.sort(key=lambda p: p["x"])
+    return {
+        "points": register_points,
+        "safe_drop_points": safe_drop_points,
+        "total_points": total_points,
+    }
 
 
 def _build_hourly_by_weekday(transactions):

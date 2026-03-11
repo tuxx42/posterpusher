@@ -88,7 +88,7 @@
     {% endif %}
     {% if cash_timeline != "null" %}
     <div class="card chart-container">
-        <h6>Cash in Register</h6>
+        <h6>Cash Overview</h6>
         <canvas id="cashTimelineChart"></canvas>
     </div>
     {% endif %}
@@ -171,7 +171,7 @@
 
     // Cash in register timeline
     if (cashTimelineData && cashTimelineData.points.length > 0) {
-        renderTimeLineChart('cashTimelineChart', [
+        var datasets = [
             {
                 label: 'Cash in Register',
                 data: cashTimelineData.points.map(p => ({x: p.x, y: p.y / 100})),
@@ -179,7 +179,28 @@
                 backgroundColor: 'rgba(76, 175, 80, 0.1)',
                 fill: true
             }
-        ]);
+        ];
+        if (cashTimelineData.safe_drop_points && cashTimelineData.safe_drop_points.length > 0) {
+            datasets.push({
+                label: 'Safe Drop',
+                data: cashTimelineData.safe_drop_points.map(p => ({x: p.x, y: p.y / 100})),
+                borderColor: 'rgba(255, 152, 0, 0.9)',
+                backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                fill: true,
+                borderDash: [5, 5]
+            });
+        }
+        if (cashTimelineData.total_points && cashTimelineData.total_points.length > 0) {
+            datasets.push({
+                label: 'Total (Register + Safe Drop)',
+                data: cashTimelineData.total_points.map(p => ({x: p.x, y: p.y / 100})),
+                borderColor: 'rgba(33, 150, 243, 0.9)',
+                backgroundColor: 'rgba(33, 150, 243, 0.05)',
+                fill: false,
+                borderWidth: 2
+            });
+        }
+        renderTimeLineChart('cashTimelineChart', datasets);
     }
 
     // Daily goal percentage chart
