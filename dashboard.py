@@ -297,7 +297,11 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
     for txn in finance_txns:
         amount = int(txn.get('amount', 0) or 0)
         comment = txn.get('comment', '')
+        category = txn.get('category_name', '')
         if 'Cash payments' in comment:
+            continue
+        # Skip transfers and adjustments (cash moving to safe, not real expenses)
+        if category in ('Transfers', 'Adjustment'):
             continue
         if amount < 0:
             raw_time = txn.get('date', '')

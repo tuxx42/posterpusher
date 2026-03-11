@@ -331,6 +331,10 @@ def calculate_expenses(finance_transactions):
         if 'Cash payments' in comment:
             continue
 
+        # Skip transfers and adjustments (cash moving to safe, not real expenses)
+        if category in ('Transfers', 'Adjustment'):
+            continue
+
         # Only count actual expenses (negative amounts or type 0 expenses)
         if amount < 0:
             expense_amount = abs(amount)

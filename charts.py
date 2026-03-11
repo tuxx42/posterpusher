@@ -45,8 +45,14 @@ def generate_sales_chart(transactions, date_from, date_to, title, finance_transa
             amount = int(txn.get('amount', 0) or 0)
             comment = txn.get('comment', '')
 
+            category = txn.get('category_name', '')
+
             # Skip cash payments (sales income)
             if 'Cash payments' in comment:
+                continue
+
+            # Skip transfers and adjustments (cash moving to safe, not real expenses)
+            if category in ('Transfers', 'Adjustment'):
                 continue
 
             # Only count expenses (negative amounts)
