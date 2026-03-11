@@ -180,10 +180,10 @@
                 fill: true
             }
         ];
-        if (cashTimelineData.safe_drop_points && cashTimelineData.safe_drop_points.length > 0) {
+        if (cashTimelineData.safe_deposit_points && cashTimelineData.safe_deposit_points.length > 0) {
             datasets.push({
-                label: 'Safe Drop',
-                data: cashTimelineData.safe_drop_points.map(p => ({x: p.x, y: p.y / 100})),
+                label: 'Safe Deposit',
+                data: cashTimelineData.safe_deposit_points.map(p => ({x: p.x, y: p.y / 100})),
                 borderColor: 'rgba(255, 152, 0, 0.9)',
                 backgroundColor: 'rgba(255, 152, 0, 0.1)',
                 fill: true,
@@ -192,7 +192,7 @@
         }
         if (cashTimelineData.total_points && cashTimelineData.total_points.length > 0) {
             datasets.push({
-                label: 'Total (Register + Safe Drop)',
+                label: 'Total (Register + Safe Deposit)',
                 data: cashTimelineData.total_points.map(p => ({x: p.x, y: p.y / 100})),
                 borderColor: 'rgba(33, 150, 243, 0.9)',
                 backgroundColor: 'rgba(33, 150, 243, 0.05)',

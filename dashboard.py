@@ -308,22 +308,33 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
     latest_time = max(ev["raw"] for ev in cash_events) if cash_events else None
 
     register_points = []
-    safe_drop_points = []
+    safe_deposit_points = []
     total_points = []
 
-    cumulative_safe_drop = 0
+    cumulative_safe_deposit = 0
 
     # Process shifts in chronological order (API returns newest first)
     for shift in reversed(shifts):
         shift_start_raw = shift.get('date_start', '')
         shift_end_raw = shift.get('date_end', '')
         opening = int(shift.get('amount_start', 0) or 0)
-        collection = int(shift.get('amount_collection', 0) or 0)
+
+        # Calculate safe deposit: difference between expected and actual closing balance.
+        # Poster's amount_collection is unused; deposits show as the gap when cash is
+        # removed from the register at shift close.
+        if shift_end_raw:
+            cash_sales = int(shift.get('amount_sell_cash', 0) or 0)
+            expenses = int(shift.get('amount_credit', 0) or 0)
+            closing = int(shift.get('amount_end', 0) or 0)
+            expected_end = opening + cash_sales - expenses
+            deposit = max(expected_end - closing, 0)
+        else:
+            deposit = 0
 
         # Skip shifts that don't overlap with our data range (if we have events)
         if earliest and latest_time:
             if shift_end_raw and shift_end_raw < earliest:
-                cumulative_safe_drop += collection
+                cumulative_safe_deposit += deposit
                 continue
             if shift_start_raw > latest_time:
                 continue
@@ -331,8 +342,8 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         # Opening point
         start_iso = _to_iso(adjust_poster_time(shift_start_raw))
         register_points.append({"x": start_iso, "y": opening})
-        safe_drop_points.append({"x": start_iso, "y": cumulative_safe_drop})
-        total_points.append({"x": start_iso, "y": opening + cumulative_safe_drop})
+        safe_deposit_points.append({"x": start_iso, "y": cumulative_safe_deposit})
+        total_points.append({"x": start_iso, "y": opening + cumulative_safe_deposit})
 
         # Find events within this shift's time window
         shift_events = []
@@ -347,27 +358,26 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
             balance += ev["amount"]
             ev_iso = _to_iso(adjust_poster_time(ev["raw"]))
             register_points.append({"x": ev_iso, "y": balance})
-            safe_drop_points.append({"x": ev_iso, "y": cumulative_safe_drop})
-            total_points.append({"x": ev_iso, "y": balance + cumulative_safe_drop})
+            safe_deposit_points.append({"x": ev_iso, "y": cumulative_safe_deposit})
+            total_points.append({"x": ev_iso, "y": balance + cumulative_safe_deposit})
 
         # Closing point from Poster (if shift is closed)
         if shift_end_raw:
-            closing = int(shift.get('amount_end', 0) or 0)
-            cumulative_safe_drop += collection
+            cumulative_safe_deposit += deposit
             end_iso = _to_iso(adjust_poster_time(shift_end_raw))
             register_points.append({"x": end_iso, "y": closing})
-            safe_drop_points.append({"x": end_iso, "y": cumulative_safe_drop})
-            total_points.append({"x": end_iso, "y": closing + cumulative_safe_drop})
+            safe_deposit_points.append({"x": end_iso, "y": cumulative_safe_deposit})
+            total_points.append({"x": end_iso, "y": closing + cumulative_safe_deposit})
 
     if len(register_points) <= 1:
         return None
 
     register_points.sort(key=lambda p: p["x"])
-    safe_drop_points.sort(key=lambda p: p["x"])
+    safe_deposit_points.sort(key=lambda p: p["x"])
     total_points.sort(key=lambda p: p["x"])
     return {
         "points": register_points,
-        "safe_drop_points": safe_drop_points,
+        "safe_deposit_points": safe_deposit_points,
         "total_points": total_points,
     }
 
