@@ -287,8 +287,8 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         return ts.replace(' ', 'T') if ' ' in ts else ts + "T00:00:00"
 
     # Fetch finance transactions spanning all shifts so safe expenses are complete
-    earliest_shift = min(s.get('date_start', '')[:8].replace('-', '') for s in shifts)
-    latest_shift = max((s.get('date_end', '') or s.get('date_start', ''))[:8].replace('-', '') for s in shifts)
+    earliest_shift = min(s.get('date_start', '')[:10].replace('-', '') for s in shifts)
+    latest_shift = max((s.get('date_end', '') or s.get('date_start', ''))[:10].replace('-', '') for s in shifts)
     all_finance_txns = fetch_finance_transactions(earliest_shift, latest_shift)
 
     # Collect all cash events (using raw Poster times for shift matching)
