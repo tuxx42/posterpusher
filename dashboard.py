@@ -288,6 +288,7 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
 
     # Collect all cash events (using raw Poster times for shift matching)
     cash_events = []
+    safe_expenses = []  # Transfers out of the safe (reduce safe deposit)
     for txn in transactions:
         payed_cash = int(txn.get('payed_cash', 0) or 0)
         if payed_cash > 0:
@@ -300,8 +301,12 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         category = txn.get('category_name', '')
         if 'Cash payments' in comment:
             continue
-        # Skip transfers and adjustments (cash moving to safe, not real expenses)
+        # Transfers/adjustments don't affect the register, but negative ones
+        # represent expenses paid from the safe deposit
         if category in ('Transfers', 'Adjustment'):
+            if amount < 0:
+                raw_time = txn.get('date', '')
+                safe_expenses.append({"raw": raw_time, "amount": amount})
             continue
         if amount < 0:
             raw_time = txn.get('date', '')
@@ -335,10 +340,18 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         else:
             deposit = 0
 
+        # Find safe expenses within this shift's time window
+        shift_safe_expenses = []
+        for se in safe_expenses:
+            if se["raw"] >= shift_start_raw and (not shift_end_raw or se["raw"] <= shift_end_raw):
+                shift_safe_expenses.append(se)
+        shift_safe_expenses.sort(key=lambda e: e["raw"])
+        shift_safe_expense_total = sum(se["amount"] for se in shift_safe_expenses)
+
         # Skip shifts that don't overlap with our data range (if we have events)
         if earliest and latest_time:
             if shift_end_raw and shift_end_raw < earliest:
-                cumulative_safe_deposit += deposit
+                cumulative_safe_deposit += deposit + shift_safe_expense_total
                 continue
             if shift_start_raw > latest_time:
                 continue
@@ -364,6 +377,13 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
             register_points.append({"x": ev_iso, "y": balance})
             safe_deposit_points.append({"x": ev_iso, "y": cumulative_safe_deposit})
             total_points.append({"x": ev_iso, "y": balance + cumulative_safe_deposit})
+
+        # Apply safe expenses (reduce safe deposit when money leaves the safe)
+        for se in shift_safe_expenses:
+            cumulative_safe_deposit += se["amount"]  # amount is negative
+            se_iso = _to_iso(adjust_poster_time(se["raw"]))
+            safe_deposit_points.append({"x": se_iso, "y": cumulative_safe_deposit})
+            total_points.append({"x": se_iso, "y": balance + cumulative_safe_deposit})
 
         # Closing point from Poster (if shift is closed)
         if shift_end_raw:
