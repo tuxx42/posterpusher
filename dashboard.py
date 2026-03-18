@@ -299,6 +299,7 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         amount = int(txn.get('amount', 0) or 0)
         comment = txn.get('comment', '')
         category = txn.get('category_name', '')
+        logger.info(f"finance_txn: category={category!r} amount={amount} comment={comment!r} type={txn.get('type', '')!r}")
         if 'Cash payments' in comment:
             continue
         # Transfers/adjustments don't affect the register, but negative ones
@@ -311,6 +312,10 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         if amount < 0:
             raw_time = txn.get('date', '')
             cash_events.append({"raw": raw_time, "amount": amount})
+
+    logger.info(f"Safe expenses collected: {len(safe_expenses)}, total={sum(se['amount'] for se in safe_expenses)}")
+    for se in safe_expenses:
+        logger.info(f"  safe_expense: raw={se['raw']} amount={se['amount']}")
 
     # Determine the time range of our data (if any cash events exist)
     earliest = min(ev["raw"] for ev in cash_events) if cash_events else None
