@@ -278,7 +278,7 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
     closing balance (if closed).  This ensures the graph matches the
     cash-register values Poster reports.
     """
-    from app import adjust_poster_time
+    from app import adjust_poster_time, fetch_finance_transactions
 
     if not shifts:
         return None
@@ -286,15 +286,21 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
     def _to_iso(ts):
         return ts.replace(' ', 'T') if ' ' in ts else ts + "T00:00:00"
 
+    # Fetch finance transactions spanning all shifts so safe expenses are complete
+    earliest_shift = min(s.get('date_start', '')[:8].replace('-', '') for s in shifts)
+    latest_shift = max((s.get('date_end', '') or s.get('date_start', ''))[:8].replace('-', '') for s in shifts)
+    all_finance_txns = fetch_finance_transactions(earliest_shift, latest_shift)
+
     # Collect all cash events (using raw Poster times for shift matching)
     cash_events = []
-    safe_expenses = []  # Transfers out of the safe (reduce safe deposit)
+    safe_expenses = []  # Expenses from the safe deposit account
     for txn in transactions:
         payed_cash = int(txn.get('payed_cash', 0) or 0)
         if payed_cash > 0:
             raw_time = txn.get('date_close_date', '')
             cash_events.append({"raw": raw_time, "amount": payed_cash})
 
+    # Use today's finance_txns for register cash events
     for txn in finance_txns:
         amount = int(txn.get('amount', 0) or 0)
         comment = txn.get('comment', '')
@@ -302,17 +308,27 @@ def _build_cash_timeline(transactions, finance_txns, shifts):
         account_name = txn.get('account_name', '')
         if 'Cash payments' in comment:
             continue
-        # Transfers/adjustments don't affect register or safe balances directly
         if category in ('Transfers', 'Adjustment'):
             continue
-        # Expenses filed against the safe deposit account reduce the safe, not the register
-        if 'Safe deposit' in account_name and amount < 0:
-            raw_time = txn.get('date', '')
-            safe_expenses.append({"raw": raw_time, "amount": amount})
+        if 'Safe deposit' in account_name:
             continue
         if amount < 0:
             raw_time = txn.get('date', '')
             cash_events.append({"raw": raw_time, "amount": amount})
+
+    # Use full-range finance txns to collect all safe deposit expenses
+    for txn in all_finance_txns:
+        amount = int(txn.get('amount', 0) or 0)
+        comment = txn.get('comment', '')
+        category = txn.get('category_name', '')
+        account_name = txn.get('account_name', '')
+        if 'Cash payments' in comment:
+            continue
+        if category in ('Transfers', 'Adjustment'):
+            continue
+        if 'Safe deposit' in account_name and amount < 0:
+            raw_time = txn.get('date', '')
+            safe_expenses.append({"raw": raw_time, "amount": amount})
 
     # Determine the time range of our data (if any cash events exist)
     earliest = min(ev["raw"] for ev in cash_events) if cash_events else None
