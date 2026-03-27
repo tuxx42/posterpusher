@@ -603,6 +603,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "/users - List approved users\n"
             "/promote ID - Promote user to admin\n"
             "/demote ID - Remove admin privileges\n"
+            "/removeuser ID - Remove a user\n"
             "/config - View bot configuration\n"
             "/reset - Reset all configuration\n\n"
             "<b>🔧 Debug:</b>\n"
@@ -983,6 +984,77 @@ async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error(f"Failed to notify demoted admin: {e}")
 
     logger.info(f"User demoted from admin: {target_chat_id}")
+
+
+@require_admin
+async def removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /removeuser command - remove an approved user (admin only)."""
+    chat_id = str(update.effective_chat.id)
+
+    if not context.args:
+        # List removable users (approved users who are not the current admin)
+        removable = {cid: info for cid, info in approved_users.items() if cid != chat_id}
+        if not removable:
+            await update.message.reply_text("No users available to remove.")
+            return
+
+        message = "🚫 <b>Remove User</b>\n\n"
+        message += "Select a user to remove:\n\n"
+        for uid, info in removable.items():
+            username_str = f"@{info['username']}" if info.get('username') else "no username"
+            is_admin = " (Admin)" if uid in admin_chat_ids else ""
+            message += (
+                f"<b>{info['name']}</b>{is_admin} - {username_str}\n"
+                f"/removeuser {uid}\n\n"
+            )
+        await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+        return
+
+    target_chat_id = context.args[0]
+
+    # Cannot remove yourself
+    if target_chat_id == chat_id:
+        await update.message.reply_text("You cannot remove yourself.")
+        return
+
+    # Check if target is an approved user
+    if target_chat_id not in approved_users:
+        await update.message.reply_text(
+            f"Chat ID {target_chat_id} is not an approved user.\n"
+            "Use /users to see approved users."
+        )
+        return
+
+    user_info = approved_users[target_chat_id]
+    user_name = user_info.get('name', 'Unknown')
+
+    # Remove from all sets
+    del approved_users[target_chat_id]
+    admin_chat_ids.discard(target_chat_id)
+    subscribed_chats.discard(target_chat_id)
+    theft_alert_chats.discard(target_chat_id)
+    save_config()
+
+    await update.message.reply_text(
+        f"🚫 <b>User Removed</b>\n\n"
+        f"<b>{user_name}</b> has been removed.\n"
+        f"Their subscriptions and admin status have been revoked.",
+        parse_mode=ParseMode.HTML
+    )
+
+    # Notify the removed user
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await safe_send_message(
+                bot, target_chat_id,
+                "ℹ️ Your access has been revoked by an admin. Send /request to request access again.",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify removed user: {e}")
+
+    logger.info(f"User removed: {target_chat_id} ({user_name})")
 
 
 @require_admin
@@ -3311,6 +3383,7 @@ def main():
     application.add_handler(CommandHandler("users", users))
     application.add_handler(CommandHandler("promote", promote))
     application.add_handler(CommandHandler("demote", demote))
+    application.add_handler(CommandHandler("removeuser", removeuser))
     application.add_handler(CommandHandler("config", config_cmd))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("debug", debug))
